@@ -116,9 +116,17 @@ export const mockProvider: ContentProvider = {
   async searchTitles(query, options: SearchTitlesOptions = {}) {
     await simulateLatency();
     const q = query.trim().toLowerCase();
+
+    // A blank query returns nothing, NOT the whole catalog. TMDB rejects an
+    // empty `query` param outright, so returning everything here would make
+    // the two providers behave differently for the same call — precisely the
+    // drift this abstraction exists to prevent. Use getTrending() to browse.
+    if (!q) {
+      return { items: [], page: 1, totalPages: 1, totalResults: 0 };
+    }
+
     const matches = MOCK_CATALOG.filter((entry) => {
       if (options.mediaType && entry.mediaType !== options.mediaType) return false;
-      if (!q) return true;
       return (
         entry.name.toLowerCase().includes(q) ||
         (entry.originalName?.toLowerCase().includes(q) ?? false)

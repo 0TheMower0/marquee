@@ -132,6 +132,41 @@ Three rules:
 `.env.local` is gitignored. `.env.example` is the committed template and must
 never contain a real credential.
 
+### Verified, not assumed
+
+The boundary was tested in Step 3, not taken on trust:
+
+- A client component importing `@/lib/content` **fails the build** with a full
+  import trace. That is `server-only` working; if you ever hit this error, fix
+  the import — do not delete the guard.
+- `.next/static` was grepped for `TMDB_READ_ACCESS_TOKEN`, `api.themoviedb.org`,
+  `image.tmdb.org`, `Bearer `, `tmdbProvider`, `tmdbFetch` — all absent, with a
+  positive control confirming the grep detects strings that *are* present.
+
+Worth being precise about one thing: **poster/backdrop URLs on
+`image.tmdb.org` do reach the browser at runtime**, inside the RSC payload, and
+must — otherwise no images render. What never reaches the browser is the token,
+the API host, and the provider code. Those are different claims; don't conflate
+them.
+
+### TMDB fetch caching and the memoization tradeoff
+
+`tmdbFetch` passes `AbortSignal.timeout(8s)`. Per
+`node_modules/next/dist/docs/01-app/03-api-reference/04-functions/fetch.md`,
+passing a signal **opts the request out of Next's per-render fetch
+memoization**. This was a deliberate trade: an un-timed-out hung connection
+would stall a Server Component render indefinitely, which is worse than losing
+same-URL dedupe within a single render.
+
+The persistent data cache (`next.revalidate`) is unaffected, and that is the one
+that actually saves API calls across requests. Lifetimes live in `REVALIDATE` in
+`lib/content/tmdb/index.ts` — search 5 min, trending 1 hr, detail/related 24 hr,
+watch providers 12 hr.
+
+If duplicate same-URL fetches inside one render become a real problem, wrap the
+provider methods in React's `cache()` — that dedupes regardless of the signal.
+Do not solve it by removing the timeout.
+
 ### Client-side data seam (not built yet — Phase 2)
 
 Phase 1 pages are Server Components that call the provider directly, so no API
@@ -252,7 +287,7 @@ do not implement them early.
 
 - [x] **Step 1** — Scaffold, design tokens, fonts, env files, this document
 - [x] **Step 2** — Content layer: types, interface, errors, mock provider + catalog
-- [ ] **Step 3** — TMDB provider, normalization, `server-only` guards
+- [x] **Step 3** — TMDB provider, normalization, `server-only` guards
 - [ ] **Step 4** — Design system: Button, Card, Badge, Tabs, Skeleton, EmptyState, TicketCard
 - [ ] **Step 5** — App shell: nav, four routes, footer
 - [ ] **Step 6** — Home (trending grid) + `/title/[mediaType]/[id]`
