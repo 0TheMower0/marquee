@@ -258,6 +258,99 @@
 }
 
 /* ============================================================================
+   TICKET SURFACE — the signature element
+   ============================================================================
+   Punches two side notches and a row of perforations through the card using
+   mask-image only. No image assets, no pseudo-element circles painted in the
+   page background colour — so it works on ANY background, including the
+   artwork-derived gradients Phase 4 will introduce.
+
+   THREE THINGS HERE ARE LOAD-BEARING:
+
+   1. This class goes on an INNER element, never on the focusable <a>/<button>
+      wrapper. A mask clips everything the element paints — including its
+      focus outline. Masking the interactive element itself would silently
+      destroy the keyboard focus ring, which is a hard requirement of this
+      project.
+
+   2. `mask-composite: intersect` is what makes holes. The default (`add`)
+      unions the layers, and since every layer is opaque almost everywhere,
+      the union would be fully opaque and no hole would appear.
+
+   3. Each layer positions its circle INSIDE its own gradient box rather than
+      via mask-position. mask-position percentages resolve against
+      (element size − mask size), not the element box, which makes
+      `calc(100% - …)` offsets there subtly wrong. Sizing the tile and placing
+      the circle within it sidesteps that entirely.
+
+   Degradation: where mask-composite is unsupported the layers union and the
+   card renders as a plain rounded rectangle — no notches, nothing broken.
+   ========================================================================= */
+
+@layer components {
+  .ticket-surface {
+    /* The tear line sits exactly one stub-height up from the bottom edge.
+       The stub element below is given this same height, so the perforation
+       always lands on the divider rather than floating near it. */
+    --tear-y: calc(100% - var(--ticket-stub));
+    --perf-r: calc(var(--ticket-perf-size) / 2);
+
+    --ticket-mask:
+      /* left notch */
+      radial-gradient(
+        circle at left var(--tear-y),
+        transparent var(--ticket-notch),
+        #000 calc(var(--ticket-notch) + 0.5px)
+      ),
+      /* right notch */
+      radial-gradient(
+        circle at right var(--tear-y),
+        transparent var(--ticket-notch),
+        #000 calc(var(--ticket-notch) + 0.5px)
+      ),
+      /* perforation: one full-height column tiled horizontally, with the
+         hole placed on the tear line inside each tile */
+      radial-gradient(
+        circle at center var(--tear-y),
+        transparent var(--perf-r),
+        #000 calc(var(--perf-r) + 0.5px)
+      );
+
+    --ticket-mask-size: 100% 100%, 100% 100%, var(--ticket-perf-gap) 100%;
+    --ticket-mask-repeat: no-repeat, no-repeat, repeat-x;
+
+    -webkit-mask-image: var(--ticket-mask);
+    -webkit-mask-size: var(--ticket-mask-size);
+    -webkit-mask-repeat: var(--ticket-mask-repeat);
+    -webkit-mask-position: 0 0;
+    -webkit-mask-composite: source-in;
+
+    mask-image: var(--ticket-mask);
+    mask-size: var(--ticket-mask-size);
+    mask-repeat: var(--ticket-mask-repeat);
+    mask-position: 0 0;
+    mask-composite: intersect;
+  }
+
+  /* Hover lift lives on the OUTER wrapper (unmasked), so the transform never
+     forces the mask to recompute. Gated on an explicit no-preference query
+     rather than relying on the global reduce block, so the motion is opt-in
+     by preference rather than opt-out. */
+  @media (prefers-reduced-motion: no-preference) {
+    .ticket-lift {
+      transition:
+        transform var(--dur-base) var(--ease-marquee),
+        filter var(--dur-base) var(--ease-marquee);
+    }
+
+    .ticket-lift:hover {
+      transform: translateY(-4px);
+      filter: drop-shadow(0 12px 20px rgb(0 0 0 / 0.45));
+    }
+  }
+}
+
+/* ============================================================================
    REDUCED MOTION
    ============================================================================
    Global kill switch rather than per-component opt-in, so an animation added

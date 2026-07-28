@@ -240,6 +240,33 @@ that element will not re-theme.
 - Scale: `text-display-{sm,md,lg,xl,2xl}` (Bebas, tight leading, tracked out)
   and `text-body-{sm,,lg}` + `text-meta{,-sm}` (Inter).
 
+### `cn()` and the tailwind-merge trap
+
+`lib/utils/cn.ts` extends tailwind-merge with our custom `--text-*` scale. That
+configuration is **required, not cosmetic.**
+
+tailwind-merge resolves conflicts by bucketing classes. It only knows
+Tailwind's stock sizes (`text-sm`, `text-lg`, …), so it treats any other
+`text-*` as a **colour**. That put `text-display-sm` and `text-accent` in the
+same bucket, and only the last member survives — so
+`cn("text-accent", "text-display-sm")` silently returned just
+`text-display-sm`. The Outline button rendered at the correct size in the
+wrong colour, with no warning anywhere. It was caught by looking at the
+rendered page, not by the build.
+
+**When adding a `--text-*` token to `globals.css`, add its name to
+`FONT_SIZES` in `lib/utils/cn.ts` too.** Forgetting reintroduces the bug
+silently.
+
+### Component rules
+
+- Semantic tokens only — never `--gold-400` / `bg-[#e8b33c]`. A raw value
+  cannot re-theme, so it breaks Phase 4 for that element.
+- Alpha modifiers on semantic tokens (`bg-accent/15`) still re-theme; the alpha
+  applies to whatever the token currently resolves to. Safe to use.
+- Anything with a mask goes on an inner element, never on the focusable
+  wrapper — see the TicketCard note in `globals.css`.
+
 ### Quality floor — enforced, not aspirational
 
 - **Focus**: one global `:focus-visible` rule in `globals.css` gives every
@@ -288,7 +315,8 @@ do not implement them early.
 - [x] **Step 1** — Scaffold, design tokens, fonts, env files, this document
 - [x] **Step 2** — Content layer: types, interface, errors, mock provider + catalog
 - [x] **Step 3** — TMDB provider, normalization, `server-only` guards
-- [ ] **Step 4** — Design system: Button, Card, Badge, Tabs, Skeleton, EmptyState, TicketCard
+- [x] **Step 4** — Design system: Button, Card, Badge, Tabs, Skeleton, EmptyState, TicketCard
+      *(temporary `/styleguide` route — delete in Step 6)*
 - [ ] **Step 5** — App shell: nav, four routes, footer
 - [ ] **Step 6** — Home (trending grid) + `/title/[mediaType]/[id]`
 
