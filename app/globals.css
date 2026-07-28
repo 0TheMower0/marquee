@@ -1,0 +1,277 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   MARQUEE DESIGN TOKENS
+   ============================================================================
+   Two-layer system, and the split matters:
+
+   1. :root defines RAW palette values (--gold-400, --cyan-400, ...) plus
+      SEMANTIC aliases that point at them (--accent-primary: var(--gold-400)).
+   2. @theme inline maps the semantic aliases into Tailwind's utility system.
+
+   The `inline` keyword is load-bearing. Without it, Tailwind emits
+   `background-color: var(--color-accent)` and --color-accent resolves ONCE at
+   :root — custom properties inherit as already-substituted computed values, so
+   a nested override would never take effect. With `inline`, Tailwind emits
+   `background-color: var(--accent-primary)` directly, which re-resolves at
+   every element.
+
+   That is what makes Phase 4 possible: a title detail page extracts colors from
+   its own artwork, sets --accent-primary on a wrapper element, and every
+   `bg-accent` / `text-accent` / `border-accent` inside re-tints with zero
+   component changes.
+   ========================================================================= */
+
+:root {
+  /* --- Raw palette: surfaces -------------------------------------------- */
+  /* Warm-neutral near-blacks, not pure grey. Gold reads as light against a
+     warm dark; on a cold grey it reads as dirty yellow. */
+  --ink-900: #060608; /* sunken — ticket notches, wells */
+  --ink-800: #0b0b0e; /* page background */
+  --ink-700: #141419; /* raised — cards */
+  --ink-600: #1d1d24; /* overlay — popovers, hover states */
+  --ink-500: #2a2a33; /* borders on raised surfaces */
+
+  /* --- Raw palette: marquee gold ---------------------------------------- */
+  --gold-100: #fbf0d2;
+  --gold-200: #f5dfa0;
+  --gold-300: #efcc6d;
+  --gold-400: #e8b33c; /* primary accent */
+  --gold-500: #d19a26;
+  --gold-600: #a8781a;
+  --gold-700: #6b4c10;
+  --gold-800: #3a2908;
+
+  /* --- Raw palette: electric cyan --------------------------------------- */
+  --cyan-100: #d2f7fb;
+  --cyan-200: #9eedf5;
+  --cyan-300: #66e1ee;
+  --cyan-400: #35d6e8; /* secondary accent */
+  --cyan-500: #1cb3c4;
+  --cyan-600: #128796;
+  --cyan-700: #0b535d;
+
+  /* --- Raw palette: warm neutrals for text ------------------------------ */
+  /* Slightly warm white — marquee bulbs are tungsten, not LED. */
+  --paper-100: #f5f3ef;
+  --paper-300: #a8a5a0;
+  --paper-500: #6e6b67;
+  --paper-700: #45433f;
+
+  /* --- Raw palette: status ---------------------------------------------- */
+  --status-success: #4ade80;
+  --status-warning: #fbbf24;
+  --status-danger: #f87171;
+
+  /* --- Semantic aliases ------------------------------------------------- */
+  /* Components reference ONLY these, never the raw ramp above. Overriding any
+     of them on a wrapper element re-themes everything beneath it. */
+  --bg-base: var(--ink-800);
+  --bg-sunken: var(--ink-900);
+  --bg-raised: var(--ink-700);
+  --bg-overlay: var(--ink-600);
+
+  --fg-default: var(--paper-100);
+  --fg-muted: var(--paper-300);
+  --fg-subtle: var(--paper-500);
+  --fg-on-accent: var(--ink-900); /* text sitting on a gold fill */
+
+  --accent-primary: var(--gold-400);
+  --accent-primary-hover: var(--gold-300);
+  --accent-primary-dim: var(--gold-700);
+  --accent-secondary: var(--cyan-400);
+  --accent-secondary-hover: var(--cyan-300);
+  --accent-secondary-dim: var(--cyan-700);
+
+  --line-subtle: rgb(255 255 255 / 0.07);
+  --line-default: rgb(255 255 255 / 0.13);
+  --line-strong: rgb(255 255 255 / 0.22);
+
+  /* --- Ticket geometry --------------------------------------------------- */
+  /* Consumed by the TicketCard mask in Step 4. Tokenised so the perforation
+     rhythm stays identical across every card size. */
+  --ticket-perf-size: 7px; /* diameter of a punched hole */
+  --ticket-perf-gap: 13px; /* centre-to-centre spacing */
+  --ticket-notch: 14px; /* radius of the two side notches */
+  --ticket-stub: 74px; /* height of the tear-off stub */
+
+  /* --- Motion ------------------------------------------------------------ */
+  --ease-marquee: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+
+  /* --- Effects ----------------------------------------------------------- */
+  --glow-gold: 0 0 0 1px rgb(232 179 60 / 0.25),
+    0 8px 30px -8px rgb(232 179 60 / 0.35);
+  --glow-cyan: 0 0 0 1px rgb(53 214 232 / 0.25),
+    0 8px 30px -8px rgb(53 214 232 / 0.35);
+}
+
+@theme inline {
+  /* --- Colors ------------------------------------------------------------ */
+  --color-ink: var(--bg-base);
+  --color-sunken: var(--bg-sunken);
+  --color-surface: var(--bg-raised);
+  --color-overlay: var(--bg-overlay);
+
+  --color-fg: var(--fg-default);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-on-accent: var(--fg-on-accent);
+
+  --color-accent: var(--accent-primary);
+  --color-accent-hover: var(--accent-primary-hover);
+  --color-accent-dim: var(--accent-primary-dim);
+  --color-accent-2: var(--accent-secondary);
+  --color-accent-2-hover: var(--accent-secondary-hover);
+  --color-accent-2-dim: var(--accent-secondary-dim);
+
+  --color-line: var(--line-default);
+  --color-line-subtle: var(--line-subtle);
+  --color-line-strong: var(--line-strong);
+
+  --color-success: var(--status-success);
+  --color-warning: var(--status-warning);
+  --color-danger: var(--status-danger);
+
+  /* --- Typefaces ---------------------------------------------------------- */
+  /* Bebas Neue has NO LOWERCASE. font-display is valid only for titles, nav
+     labels and section headers. Anything mixed-case — overviews, episode
+     names, metadata — must use font-sans. The scale below enforces this: every
+     display-* size ships uppercase + display tracking, every body-* size does
+     not. */
+  --font-display: var(--font-bebas), "Haettenschweiler", "Arial Narrow Bold",
+    sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+
+  /* --- Display scale (Bebas) ---------------------------------------------- */
+  /* Bebas carries enormous internal leading, so line-heights run below 1. */
+  --text-display-2xl: clamp(2.75rem, 1.4rem + 6.5vw, 5rem);
+  --text-display-2xl--line-height: 0.88;
+  --text-display-2xl--letter-spacing: 0.01em;
+
+  --text-display-xl: clamp(2rem, 1.2rem + 3.6vw, 3.25rem);
+  --text-display-xl--line-height: 0.9;
+  --text-display-xl--letter-spacing: 0.015em;
+
+  --text-display-lg: 1.75rem;
+  --text-display-lg--line-height: 0.95;
+  --text-display-lg--letter-spacing: 0.02em;
+
+  --text-display-md: 1.375rem;
+  --text-display-md--line-height: 1;
+  --text-display-md--letter-spacing: 0.025em;
+
+  --text-display-sm: 1.125rem;
+  --text-display-sm--line-height: 1;
+  --text-display-sm--letter-spacing: 0.04em;
+
+  /* --- Body scale (Inter) -------------------------------------------------- */
+  --text-body-lg: 1.0625rem;
+  --text-body-lg--line-height: 1.6;
+
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.6;
+
+  --text-body-sm: 0.8125rem;
+  --text-body-sm--line-height: 1.5;
+
+  /* Metadata rows: "1972 · CRIME · 175 MIN". Small, tracked out, uppercase. */
+  --text-meta: 0.75rem;
+  --text-meta--line-height: 1.4;
+  --text-meta--letter-spacing: 0.08em;
+
+  --text-meta-sm: 0.6875rem;
+  --text-meta-sm--line-height: 1.4;
+  --text-meta-sm--letter-spacing: 0.1em;
+
+  /* --- Radii ---------------------------------------------------------------- */
+  /* Deliberately tight. Real tickets are barely rounded; heavy corner radii
+     would read as generic Material and undo the whole concept. */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-2xl: 20px;
+
+  /* --- Easing / duration --------------------------------------------------- */
+  --ease-marquee: var(--ease-marquee);
+  --animate-duration-fast: var(--dur-fast);
+}
+
+/* ============================================================================
+   BASE LAYER
+   ========================================================================= */
+
+@layer base {
+  html {
+    /* Nav is fixed on mobile; anchor jumps must clear it. */
+    scroll-padding-block-start: 5rem;
+  }
+
+  body {
+    background-color: var(--bg-base);
+    color: var(--fg-default);
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Focus visibility is a non-negotiable of this project. One rule, applied
+     globally, so no component can ship without it. Cyan rather than gold: gold
+     is used for *selected* state, and focus must never be confusable with
+     selection. */
+  :focus-visible {
+    outline: 2px solid var(--accent-secondary);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
+  }
+
+  /* Only suppress the default ring where we replace it deliberately. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background-color: var(--accent-primary);
+    color: var(--fg-on-accent);
+  }
+
+  /* Headings inherit weight from the display face; Bebas is single-weight, so
+     bolding it just triggers ugly synthetic emboldening. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 400;
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+}
+
+/* ============================================================================
+   REDUCED MOTION
+   ============================================================================
+   Global kill switch rather than per-component opt-in, so an animation added
+   later can't silently bypass the preference. Durations go to ~0 instead of
+   `animation: none` — that keeps animationend/transitionend listeners firing,
+   which `none` would break. */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
