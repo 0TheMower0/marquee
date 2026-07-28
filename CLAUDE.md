@@ -54,13 +54,16 @@ interface ContentProvider {
 
 ```
 lib/content/
-  types.ts      Normalized domain types — Title, Season, Episode, CastMember,
-                WatchProvider. These are OUR shapes, not TMDB's. This file is
-                the contract every component renders against.
+  types.ts      Normalized domain types — Title, TitleSummary, Season, Episode,
+                CastMember, WatchProvider. These are OUR shapes, not TMDB's.
+                This file is the contract every component renders against.
   errors.ts     ContentError, with a discriminated `kind`:
                 'not_found' | 'unauthorized' | 'rate_limited' | 'network' | 'unknown'
                 Both providers throw only these, so error UI is written once.
   provider.ts   The ContentProvider interface.
+  shared/       Code both providers legitimately need — currently just
+                placeholder.ts (deterministic gradient-from-id), reused by
+                tmdbProvider as its no-poster-image fallback in Step 3.
   mock/         mockProvider — ~25 hand-authored titles, full episode lists for
                 two shows, CSS-gradient art, simulated latency. Zero network.
   tmdb/         tmdbProvider — real TMDB v3 endpoints, v4 Bearer auth.
@@ -78,6 +81,30 @@ Why this is worth the ceremony:
 **Rule for adding features:** if a component needs data TMDB happens to
 provide, add it to `types.ts` and the interface *first*, then implement it in
 **both** providers. Never reach around the layer.
+
+### `TitleSummary` vs `Title` — do not merge these back together
+
+List-producing methods (`searchTitles`, `getTrending`, `getSimilar`,
+`getRecommendations`) return `TitleSummary`. Only `getTitle` returns the fuller
+`Title`, which adds `cast`, `backdropUrl`, `status`, `runtimeMinutes`,
+`seasonCount`, `episodeCount`.
+
+This looks like it could be simplified to one flat type. **It can't be, without
+breaking the abstraction.** TMDB's list endpoints (search/trending/similar/
+recommendations) do not return credits — only requesting a single title's
+detail does. If list methods returned `Title` (with `cast`), `mockProvider`
+could trivially fabricate full cast for every card, while `tmdbProvider`
+legitimately could not without an extra API call per grid item. The two
+providers would then satisfy the *same interface* with different real data
+availability, which defeats the entire point of the abstraction: swap
+providers, nothing else should change.
+
+`mockProvider` deliberately mirrors this constraint even though it could
+cheaply ignore it — `toSummary()` in `lib/content/mock/index.ts` is an
+explicit field allowlist, not a spread-and-omit, specifically so it can never
+silently start leaking `cast` into list results. If you're tempted to unify
+`Title`/`TitleSummary`, first find a way to make `tmdbProvider` produce cast on
+list endpoints too — you can't, so don't merge.
 
 ### Provider selection
 
@@ -224,7 +251,7 @@ do not implement them early.
 ## Phase 1 status
 
 - [x] **Step 1** — Scaffold, design tokens, fonts, env files, this document
-- [ ] **Step 2** — Content layer: types, interface, errors, mock provider + catalog
+- [x] **Step 2** — Content layer: types, interface, errors, mock provider + catalog
 - [ ] **Step 3** — TMDB provider, normalization, `server-only` guards
 - [ ] **Step 4** — Design system: Button, Card, Badge, Tabs, Skeleton, EmptyState, TicketCard
 - [ ] **Step 5** — App shell: nav, four routes, footer
