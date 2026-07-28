@@ -2,6 +2,10 @@ import type { Metadata, Viewport } from "next";
 import { Bebas_Neue, Inter } from "next/font/google";
 import "./globals.css";
 
+import { BottomNav } from "@/components/shell/bottom-nav";
+import { Footer } from "@/components/shell/footer";
+import { Sidebar } from "@/components/shell/sidebar";
+
 /**
  * Fonts are self-hosted at build time by next/font — no runtime request to
  * Google, no layout shift, and it keeps working once the Phase 5 service worker
@@ -50,8 +54,33 @@ export default function RootLayout({
       lang="en"
       className={`${bebas.variable} ${inter.variable} h-full antialiased`}
     >
-      <body className="bg-ink text-fg flex min-h-full flex-col">
-        {children}
+      <body className="bg-ink text-fg min-h-full">
+        {/* Visually hidden until focused — the first Tab stop on any page,
+            so a keyboard user can jump past Sidebar/BottomNav straight to
+            content instead of tabbing through nav on every single page. */}
+        <a
+          href="#main-content"
+          className="bg-accent text-on-accent sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:rounded-md focus:px-4 focus:py-2 focus:font-display focus:uppercase"
+        >
+          Skip to content
+        </a>
+
+        <Sidebar />
+
+        {/* lg:pl-56 matches Sidebar's SIDEBAR_WIDTH_CLASS — the two must move
+            together (see the note in components/shell/sidebar.tsx). */}
+        <div className="flex min-h-full flex-col lg:pl-56">
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className="flex-1 pb-24 lg:pb-0"
+          >
+            {children}
+          </main>
+          <Footer />
+        </div>
+
+        <BottomNav />
       </body>
     </html>
   );

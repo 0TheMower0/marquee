@@ -13,7 +13,7 @@ import type { SVGProps } from "react";
  * plus a title if one ever needs to stand alone.
  */
 
-type IconProps = SVGProps<SVGSVGElement>;
+export type IconProps = SVGProps<SVGSVGElement>;
 
 function Icon({ children, ...props }: IconProps) {
   return (
@@ -98,6 +98,24 @@ export function CheckIcon(props: IconProps) {
   return (
     <Icon {...props}>
       <path d="m4 12.5 5 5L20 6.5" />
+    </Icon>
+  );
+}
+
+export function HomeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 11.5 12 4l8 7.5" />
+      <path d="M6 10v9h12v-9" />
+    </Icon>
+  );
+}
+
+export function UserIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M4.5 20c1.4-4 4-6 7.5-6s6.1 2 7.5 6" />
     </Icon>
   );
 }

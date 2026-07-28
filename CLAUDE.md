@@ -267,6 +267,23 @@ silently.
 - Anything with a mask goes on an inner element, never on the focusable
   wrapper — see the TicketCard note in `globals.css`.
 
+### App shell — components/shell/
+
+`Sidebar` and `BottomNav` both read from the single `NAV_ITEMS` list in
+`nav-items.ts` — never hardcode the four routes twice. Both are Client
+Components (`useActivePath` needs `usePathname`); `RootLayout` and `Footer`
+stay Server Components.
+
+The `lg` cutover (1024px, Tailwind's unmodified default) was verified against
+exact computed layout, not eyeballed: at 1276px the sidebar measures exactly
+224px (`w-56`) and the content column's `padding-left` is exactly 224px — no
+gap, no overlap. Below 1024px the sidebar is `display:none` and BottomNav is
+`display:block`, and vice versa above it.
+
+`Sidebar`'s `SIDEBAR_WIDTH_CLASS` and the `lg:pl-56` on the content wrapper in
+`app/layout.tsx` must change together — there's a comment at each site
+pointing at the other.
+
 ### Quality floor — enforced, not aspirational
 
 - **Focus**: one global `:focus-visible` rule in `globals.css` gives every
@@ -317,7 +334,7 @@ do not implement them early.
 - [x] **Step 3** — TMDB provider, normalization, `server-only` guards
 - [x] **Step 4** — Design system: Button, Card, Badge, Tabs, Skeleton, EmptyState, TicketCard
       *(temporary `/styleguide` route — delete in Step 6)*
-- [ ] **Step 5** — App shell: nav, four routes, footer
+- [x] **Step 5** — App shell: nav, four routes, footer
 - [ ] **Step 6** — Home (trending grid) + `/title/[mediaType]/[id]`
 
 ---
