@@ -420,19 +420,153 @@ and on its own page.
 
 ---
 
-## Local persistence — **planned, not built**
+## Local persistence — `lib/storage/`
 
-`lib/storage/` does not exist yet. Phase 1 had nothing to persist, so it was
-deliberately deferred to Phase 2, where watchlist/watched state needs it. The
-shape below is the decision that's already been made; only the code is pending.
+```
+lib/storage/
+  types.ts      StorageDriver, Store, StoreConfig, StorageError, StorageStatus
+  serialize.ts  Date-preserving JSON encode/decode
+  drivers.ts    localStorage / memory / null drivers + lazy selection
+  store.ts      defineStore() — namespacing, version envelope, migrations
+  index.ts      public surface; import from here, never the inner modules
+```
 
-An **async** key-value interface with a localStorage driver.
+```ts
+const library = defineStore<LibraryEntry>({
+  namespace: "library",
+  version: 1,
+});
+
+await library.set("movie:238", entry);   // rejects with StorageError
+const entry = await library.get("movie:238");
+const all = await library.getAll();
+```
 
 The interface is `Promise`-based even though localStorage is synchronous. That
-is deliberate: Phase 2's episode-level tracking means thousands of rows, and
+is deliberate: Phase 3's episode-level tracking means thousands of rows, and
 localStorage's ~5 MB synchronous, main-thread-blocking cap becomes a real
-problem. With an async interface, swapping in IndexedDB is a one-file change;
-with a sync one it is a refactor of every call site.
+problem. With an async interface, swapping in IndexedDB is one more
+implementation of `StorageDriver` plus a line in `drivers.ts`; with a sync one
+it is a refactor of every call site.
+
+### Keys
+
+`marquee:<namespace>:<key>`. The namespace is validated to contain no `:`, so
+one feature's keys can never masquerade as another's, and `clear()` is
+prefix-scoped — it never calls `localStorage.clear()`, which would wipe
+unrelated data on the origin.
+
+**The schema version is deliberately not in the key.** Putting it there would
+orphan every existing record the moment the version is bumped, which is the
+exact opposite of a migration path. Version lives inside the value envelope:
+`{ v: 1, d: <payload> }`.
+
+### Migrations are lazy and per-record — this is the important part
+
+Phase 3 *will* change the shape of tracking data when episodes arrive, and
+users must not lose their library. The obvious design — on first access, read
+the whole namespace, upgrade everything, write it back, bump a stored version
+— is rejected for one decisive reason: **localStorage has no transactions.** A
+user closing the tab mid-pass leaves the namespace half-migrated with no record
+of how far it got, and the next load cannot distinguish upgraded records from
+stale ones. That is precisely the data-loss event this layer exists to prevent.
+
+Instead each record carries its own version and is migrated on read. Every
+record is independently either old or new, and both are readable, so an
+interrupted session loses nothing. There is no migration-in-progress state to
+make crash-consistent, because no such state exists.
+
+Migrations are keyed by **target** version and chain automatically:
+
+```ts
+migrations: {
+  2: (old) => ({ status: (old as V1).watched ? "watched" : "unwatched" }),
+  3: (old) => ({ ...(old as V2), episodes: [] }),
+}
+```
+
+A v1 record read by v3 code runs `2` then `3`, then gets written back once at
+v3 (best-effort — if that write fails the caller still receives correct data
+and the record simply migrates again next time).
+
+Two costs of this design, stated plainly so nobody "cleans them up":
+
+- **Migrations can never be deleted.** A v1 record may still be sitting in a
+  browser years from now. `migrations[2]` must survive forever.
+- **Cross-record migrations are not expressible.** Splitting one key into
+  several, or deduplicating across records, needs the whole namespace at once.
+  If Phase 3 needs that, write an explicit one-off routine over `getAll()` at a
+  higher layer. Do not try to smuggle it into a per-record migration — it sees
+  one value and cannot write others.
+
+### Data is never destroyed to make a read succeed
+
+Four cases all resolve to "return `null`, leave the bytes on disk":
+
+| Situation | Why not just delete it |
+|---|---|
+| Record written by a **newer** schema (`v` > code's) | User opened a cached old deployment, or we rolled back. Downgrading data we don't understand destroys it permanently; refusing means it returns intact on the next upgrade. |
+| Migration function throws | A migration bug should be fixable by shipping a corrected migration, not a data-loss event. |
+| No migration registered for a version step | We cannot guess the transform. |
+| `validate()` rejects the shape | Cheap insurance against a migration bug handing the app the wrong type. |
+
+### Write failure is a normal condition — handle it
+
+`set()` **rejects with `StorageError`**, carrying a `reason` of
+`quota_exceeded` / `unavailable` / `serialization` / `unknown`. Quota
+exhaustion and blocked storage are ordinary states on the web, not exceptional
+ones. A write that failed must not render as success — showing "added to
+watchlist" for something that vanishes on reload is worse than an error.
+
+```ts
+try {
+  await library.set(key, entry);
+} catch (error) {
+  if (error instanceof StorageError && error.reason === "quota_exceeded") {
+    // surface it; do not pretend the write happened
+  }
+}
+```
+
+Reads never throw: a failed read degrades to `null`.
+
+### Three environments, three drivers
+
+| Environment | Driver | Behaviour |
+|---|---|---|
+| Browser, storage works | localStorage | persists |
+| Browser, storage blocked or throwing | memory | works for the tab, `getStorageStatus() === "memory"` |
+| No browser (SSR) | null | reads `null`, writes discarded, never throws |
+
+SSR **must not** use the memory driver: a module-level `Map` on the server is
+shared across every request, so one visitor's writes would be readable by the
+next. Reading nothing during SSR is also simply correct — the server has no
+access to this user's localStorage.
+
+Detection is a real write/remove round trip, not a truthiness check: merely
+accessing `localStorage` throws under some blocked-cookie settings, and Safari
+private mode historically allowed access but threw on write. It runs lazily and
+is cached, so importing this module during SSR is safe.
+
+### Dates survive round-tripping
+
+`JSON.stringify(new Date())` yields an ISO string and `JSON.parse` gives the
+string back, so a naive round trip silently changes the type of every date
+field — and tracking data is full of them. `serialize.ts` tags them as
+`{ "__mq_date": "<iso>" }` and revives them.
+
+**The replacer in `serialize.ts` must stay a `function`, never an arrow.**
+`JSON.stringify` calls `Date.prototype.toJSON()` *before* the replacer sees the
+value, so by then it is already a string and `instanceof Date` is false. The
+only way to reach the original is `this[key]`, and an arrow function does not
+receive that binding. Converting it to an arrow breaks date support silently —
+every test that doesn't specifically assert types still passes.
+
+### Known gap: multi-tab
+
+Two tabs writing the same namespace will clobber each other — there is no
+`storage`-event listener and no merge. Acceptable while everything is
+device-local; revisit alongside Phase 6 accounts, where sync arrives anyway.
 
 ---
 
@@ -470,8 +604,9 @@ do not implement them early.
 
 - [x] **Step 1** — Client data seam: `app/api/content/*` route handlers +
       `lib/content/http/httpProvider`
-- [ ] **Step 2** — `lib/storage/` — the async KV interface (see *Local
-      persistence* above; still not built)
+- [x] **Step 2** — `lib/storage/` — async KV layer: namespaced keys, versioned
+      envelope with lazy per-record migrations, graceful degradation,
+      Date-safe serialization
 - [ ] **Step 3** — Watchlist / watched state on top of that storage
 - [ ] **Step 4** — Search UI, wired to `httpProvider.searchTitles`
 
