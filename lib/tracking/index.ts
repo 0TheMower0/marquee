@@ -4,6 +4,14 @@
  * lib/storage.
  */
 export { TrackingProvider, useTracking } from "./context";
-export { trackingStore } from "./store";
+export { normalizeWatchedEpisodes, trackingStore } from "./store";
 export { entryKey, toTrackingSummary } from "./types";
-export type { TrackingEntry, TrackingStatus } from "./types";
+export type {
+  EpisodeRange,
+  MovieTrackingEntry,
+  SeasonEpisodeCounts,
+  TrackingEntry,
+  TrackingStatus,
+  TvTrackingEntry,
+  WatchedEpisodes,
+} from "./types";

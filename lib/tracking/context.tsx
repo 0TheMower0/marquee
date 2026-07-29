@@ -60,15 +60,30 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
   async function setStatus(summary: TitleSummary, status: TrackingStatus) {
     const key = entryKey(summary.mediaType, summary.id);
     const previous = entries;
+    const existing = previous[key];
     const now = new Date();
-    const next: TrackingEntry = {
+
+    const base = {
       id: summary.id,
-      mediaType: summary.mediaType,
       status,
-      addedAt: previous[key]?.addedAt ?? now,
+      addedAt: existing?.addedAt ?? now,
       updatedAt: now,
       summary,
     };
+
+    const next: TrackingEntry =
+      summary.mediaType === "tv"
+        ? {
+            ...base,
+            mediaType: "tv",
+            // Carried over, NOT reset. Changing a show's coarse status must
+            // never discard episode progress — moving something from
+            // "watching" back to "watchlist" and losing 40 watched episodes
+            // would be silent data loss.
+            watchedEpisodes:
+              existing?.mediaType === "tv" ? existing.watchedEpisodes : {},
+          }
+        : { ...base, mediaType: "movie" };
 
     setEntries({ ...previous, [key]: next });
 
