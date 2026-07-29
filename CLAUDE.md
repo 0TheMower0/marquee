@@ -567,6 +567,32 @@ only way to reach the original is `this[key]`, and an arrow function does not
 receive that binding. Converting it to an arrow breaks date support silently —
 every test that doesn't specifically assert types still passes.
 
+### Watch DATES are a separate store — do not merge them into progress
+
+`WatchedEpisodes` (see below) records **which** episodes are watched. It
+deliberately records nothing about **when**.
+
+That is not an oversight and must not be "fixed" by adding a timestamp to the
+episode ranges. Attaching a date to each episode makes every episode unique,
+which destroys the range encoding and takes a 30-show library's episode data
+from ~3 KB back to ~183 KB — measured, see the note on `EpisodeRange` in
+`lib/tracking/types.ts`.
+
+**Phase 5 (streaks) and Phase 8 (Year in Review) both need watch dates.** When
+they land, they get a **separate, append-only log keyed by date** — roughly
+"on 2026-07-14, these episodes were watched" — living in its own storage
+namespace with its own schema version. Progress state and watch history are
+different concerns with different shapes and different access patterns:
+
+| | progress | watch history |
+|---|---|---|
+| question | "have I seen S3E7?" | "what did I watch in June?" |
+| access | read constantly, per title | append on write, scanned in bulk |
+| shape | ranges, keyed by season | events, keyed by date |
+| mutability | edited freely | append-only |
+
+Merging them forces one of the two to adopt the wrong shape. Keep them apart.
+
 ### Known gap: multi-tab
 
 Two tabs writing the same namespace will clobber each other — there is no
@@ -579,10 +605,14 @@ device-local; revisit alongside Phase 6 accounts, where sync arrives anyway.
 
 ```
 lib/tracking/
-  types.ts   TrackingStatus, TrackingEntry, toTrackingSummary(), entryKey()
-  store.ts   trackingStore — a lib/storage Store<TrackingEntry>, version 1
+  types.ts     TrackingStatus, TrackingEntry (discriminated on mediaType),
+               EpisodeRange, WatchedEpisodes, SeasonEpisodeCounts
+  ranges.ts    pure inclusive-range primitives + the canonical invariant
+  progress.ts  episode operations and derived queries — pure, no storage
+  store.ts     trackingStore — a lib/storage Store<TrackingEntry>, version 2,
+               with the v1 -> v2 migration
   context.tsx  TrackingProvider + useTracking() — optimistic writes, rollback
-  index.ts   public surface; import from here
+  index.ts     public surface; import from here
 
 components/tracking/
   tracking-badge.tsx    TicketCard's corner quick-toggle (watchlist only)
@@ -657,6 +687,72 @@ roll back over the other's optimistic update if both happen to fail around the
 same time. Out of scope for Phase 2, which has no mutation queue — each caller
 also disables its own control while its write is pending, so the actual common
 case (one click, one in-flight write) is exact.
+
+### Episode-level progress (Phase 3 Step 1)
+
+`TvTrackingEntry.watchedEpisodes` is `Record<seasonNumber, EpisodeRange[]>`,
+where an `EpisodeRange` is an inclusive `[start, end]` pair. See the long note
+on `EpisodeRange` in `lib/tracking/types.ts` for the measurements behind that
+choice; the summary is ~2.8 KB vs ~183 KB for a 30-show library, and the deeper
+reason is that "mark everything up to here" — the operation people actually use
+— is *natively* one range write per season.
+
+**The canonical invariant (`lib/tracking/ranges.ts`): sorted, non-overlapping,
+non-adjacent.** `[[1,3],[4,6]]` is never stored; it collapses to `[[1,6]]`.
+Adjacency merging is what keeps a fully-watched 24-episode season at exactly
+one range even when ticked off one episode at a time. Never hand-build these —
+go through `ranges.ts`, and run anything off disk through
+`normalizeWatchedEpisodes` before reasoning over it.
+
+That invariant also buys real algorithmic simplicity: `nextUnwatched` is O(1)
+per season rather than a scan, because if the first range starts at 1 then
+non-adjacency guarantees a gap immediately after it ends.
+
+Operations live in `progress.ts` as **pure transforms** of `WatchedEpisodes`;
+`context.tsx` funnels all of them through one `applyEpisodeMutation` that owns
+the optimistic update, rollback, normalization and status re-derivation. An
+operation cannot get persistence wrong because it never sees it. Every one is
+a single store write, including whole-season and binge-to-here.
+
+Three behavioural decisions worth knowing:
+
+- **Binge is a union, not a replace.** Marking up to S3E7 must not unmark an
+  S5E1 the user had already ticked off out of order.
+- **Specials (season 0) are opt-in and excluded from completion math.** Binging
+  the main run never implicitly marks retrospectives watched, and
+  `totalCount` / `percentComplete` / `nextUnwatched` ignore season 0 — otherwise
+  a show never reaches 100% until you've watched every blooper reel.
+- **`percentComplete` returns 100 only when genuinely complete.** 61 of 62
+  episodes floors to 98, and the value is capped at 99 until `isComplete`.
+  A user one episode short must never be shown "100%".
+
+**Everything derived is computed, never stored** — remaining, percent, next
+unwatched. Season structure is passed in as `SeasonEpisodeCounts` rather than
+cached on the entry, because it is provider data: a returning show airing
+episode 9 would silently make a stored total wrong. Ranges are also clamped to
+each season's real length on read, so a stale `[1,13]` on a season trimmed to
+10 reports 7 watched rather than 130% complete.
+
+#### Coarse and fine granularity reconcile at the point of use
+
+`status` and `watchedEpisodes` are two granularities of one fact, and `status`
+is the one that always exists. A v1-migrated record — or a show marked watched
+via the title-level button, which has no season list to work from — carries
+`status: "watched"` with empty ranges.
+
+`reconcileCoarseWatched()` expands that into concrete ranges **at the point of
+use**, where the season list is finally in hand, and it runs on both the read
+path (so queries report 100%) and before every edit (so a per-episode change
+starts from "all watched" instead of silently discarding the user's earlier
+statement). It is deliberately not a migration: migrations are pure and
+synchronous and cannot fetch season data. That constraint is the whole reason
+the v1 -> v2 migration is three lines — see the note in `store.ts`.
+
+Status is re-derived after every episode mutation (`deriveStatus`): first
+episode promotes to "watching", last promotes to "watched", and emptying
+progress downgrades a now-contradictory "watched" to "watchlist". With no
+season data available it returns the current status unchanged rather than
+guessing.
 
 ---
 
@@ -782,6 +878,16 @@ do not implement them early.
       EmptyState-backed states, media-type filter, tracking-enabled results
 
 **Phase 2 is complete.**
+
+## Phase 3 status
+
+- [x] **Step 0** — Mock catalog episode data expanded: 5 shows fully
+      hand-authored to cover distinct Up Next edge cases, real per-season
+      shapes for 6 more (see `mock/episodes.ts`)
+- [x] **Step 1** — Episode-level data model: range encoding, v1 -> v2
+      migration, operations + derived queries (`lib/tracking/progress.ts`)
+- [ ] **Step 2** — The "Up Next" engine, over `nextUnwatchedEpisode`
+- [ ] **Step 3** — Episode-list UI on the title detail page
 
 ---
 

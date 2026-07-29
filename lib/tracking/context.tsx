@@ -4,9 +4,24 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 
 import type { MediaType, TitleSummary } from "@/lib/content/types";
 
-import { trackingStore } from "./store";
+import {
+  deriveStatus,
+  markEpisode,
+  markSeason,
+  markWatchedUpTo,
+  reconcileCoarseWatched,
+  unmarkEpisode,
+  unmarkSeason,
+} from "./progress";
+import { normalizeWatchedEpisodes, trackingStore } from "./store";
 import { entryKey } from "./types";
-import type { TrackingEntry, TrackingStatus } from "./types";
+import type {
+  SeasonEpisodeCounts,
+  TrackingEntry,
+  TrackingStatus,
+  TvTrackingEntry,
+  WatchedEpisodes,
+} from "./types";
 
 interface TrackingContextValue {
   /**
@@ -28,6 +43,50 @@ interface TrackingContextValue {
    */
   setStatus: (summary: TitleSummary, status: TrackingStatus) => Promise<void>;
   remove: (id: string, mediaType: MediaType) => Promise<void>;
+
+  /**
+   * Episode-level operations. All TV-only, all optimistic with the same
+   * rollback-and-rethrow contract as `setStatus`, and all exactly ONE store
+   * write regardless of how many episodes they cover.
+   *
+   * Each takes the season list because progress math needs episode counts,
+   * which are provider data and deliberately not stored on the entry (see
+   * the note on `SeasonEpisodeCounts` in ./types.ts). Pass the result of
+   * `getSeasons()`.
+   *
+   * The coarse `status` is re-derived automatically after every one of these:
+   * marking the last unwatched episode promotes a show to "watched", the
+   * first promotes it to "watching". Callers never set status by hand here.
+   */
+  markEpisodeWatched: (
+    summary: TitleSummary,
+    seasons: SeasonEpisodeCounts,
+    seasonNumber: number,
+    episodeNumber: number,
+  ) => Promise<void>;
+  unmarkEpisodeWatched: (
+    summary: TitleSummary,
+    seasons: SeasonEpisodeCounts,
+    seasonNumber: number,
+    episodeNumber: number,
+  ) => Promise<void>;
+  markSeasonWatched: (
+    summary: TitleSummary,
+    seasons: SeasonEpisodeCounts,
+    seasonNumber: number,
+  ) => Promise<void>;
+  unmarkSeasonWatched: (
+    summary: TitleSummary,
+    seasons: SeasonEpisodeCounts,
+    seasonNumber: number,
+  ) => Promise<void>;
+  /** "I binged to here" — everything up to and including this episode. */
+  markWatchedUpToEpisode: (
+    summary: TitleSummary,
+    seasons: SeasonEpisodeCounts,
+    seasonNumber: number,
+    episodeNumber: number,
+  ) => Promise<void>;
 }
 
 const TrackingContext = createContext<TrackingContextValue | null>(null);
@@ -95,6 +154,65 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  /**
+   * The single path every episode-level operation goes through.
+   *
+   * Concentrating them here means the optimistic-update, rollback, status
+   * re-derivation and normalization rules exist once. An operation is just a
+   * pure transform of `WatchedEpisodes` — it cannot get the persistence
+   * details wrong because it never sees them.
+   */
+  async function applyEpisodeMutation(
+    summary: TitleSummary,
+    seasons: SeasonEpisodeCounts,
+    mutate: (watched: WatchedEpisodes) => WatchedEpisodes,
+  ) {
+    if (summary.mediaType !== "tv") {
+      // A programming error, not a user-facing condition: movies have no
+      // episodes and the types already prevent this at every real call site.
+      throw new Error(
+        `Episode progress is TV-only; got a movie ("${summary.id}").`,
+      );
+    }
+
+    const key = entryKey("tv", summary.id);
+    const previous = entries;
+    const existing = previous[key];
+    const now = new Date();
+
+    // Expand a coarse "watched" into real ranges BEFORE editing, so a
+    // per-episode change to a v1-migrated show starts from "all watched"
+    // rather than silently discarding it. See reconcileCoarseWatched.
+    const currentWatched: WatchedEpisodes =
+      existing?.mediaType === "tv"
+        ? reconcileCoarseWatched(existing, seasons)
+        : {};
+
+    const nextWatched = normalizeWatchedEpisodes(mutate(currentWatched));
+
+    const next: TvTrackingEntry = {
+      id: summary.id,
+      mediaType: "tv",
+      // Default "watching" for a brand-new entry: marking an episode on an
+      // untracked show means you've started it. deriveStatus promotes to
+      // "watched" if that episode completed the show.
+      status: deriveStatus(existing?.status ?? "watching", nextWatched, seasons),
+      addedAt: existing?.addedAt ?? now,
+      updatedAt: now,
+      summary,
+      watchedEpisodes: nextWatched,
+    };
+
+    setEntries({ ...previous, [key]: next });
+
+    try {
+      await trackingStore.set(key, next);
+    } catch (error) {
+      setEntries(previous);
+      throw error;
+    }
+  }
+
   async function remove(id: string, mediaType: MediaType) {
     const key = entryKey(mediaType, id);
     const previous = entries;
@@ -118,6 +236,27 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
     getEntry: (id, mediaType) => entries[entryKey(mediaType, id)],
     setStatus,
     remove,
+
+    markEpisodeWatched: (summary, seasons, seasonNumber, episodeNumber) =>
+      applyEpisodeMutation(summary, seasons, (watched) =>
+        markEpisode(watched, seasonNumber, episodeNumber),
+      ),
+    unmarkEpisodeWatched: (summary, seasons, seasonNumber, episodeNumber) =>
+      applyEpisodeMutation(summary, seasons, (watched) =>
+        unmarkEpisode(watched, seasonNumber, episodeNumber),
+      ),
+    markSeasonWatched: (summary, seasons, seasonNumber) =>
+      applyEpisodeMutation(summary, seasons, (watched) =>
+        markSeason(watched, seasons, seasonNumber),
+      ),
+    unmarkSeasonWatched: (summary, seasons, seasonNumber) =>
+      applyEpisodeMutation(summary, seasons, (watched) =>
+        unmarkSeason(watched, seasonNumber),
+      ),
+    markWatchedUpToEpisode: (summary, seasons, seasonNumber, episodeNumber) =>
+      applyEpisodeMutation(summary, seasons, (watched) =>
+        markWatchedUpTo(watched, seasons, seasonNumber, episodeNumber),
+      ),
   };
 
   return <TrackingContext.Provider value={value}>{children}</TrackingContext.Provider>;

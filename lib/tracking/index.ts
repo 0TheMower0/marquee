@@ -4,6 +4,28 @@
  * lib/storage.
  */
 export { TrackingProvider, useTracking } from "./context";
+export {
+  deriveStatus,
+  getTitleProgress,
+  isEpisodeWatched,
+  markEpisode,
+  markSeason,
+  markWatchedUpTo,
+  nextUnwatchedEpisode,
+  reconcileCoarseWatched,
+  totalEpisodeCount,
+  unmarkEpisode,
+  unmarkSeason,
+  watchedEpisodeCount,
+} from "./progress";
+export type { EpisodeRef, TitleProgress } from "./progress";
+export {
+  addRange,
+  countRanges,
+  normalizeRanges,
+  rangesContain,
+  removeRange,
+} from "./ranges";
 export { normalizeWatchedEpisodes, trackingStore } from "./store";
 export { entryKey, toTrackingSummary } from "./types";
 export type {
