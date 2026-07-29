@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { cn } from "@/lib/utils/cn";
+import { initialsFor } from "@/lib/utils/initials";
 import type { TitleSummary } from "@/lib/content/types";
 
 /**
@@ -21,21 +22,11 @@ import type { TitleSummary } from "@/lib/content/types";
 
 interface TicketCardProps {
   title: TitleSummary;
-  /** Suppresses the link wrapper for static display (e.g. the styleguide). */
+  /** `null` suppresses the link wrapper entirely, for static/preview display. */
   href?: string | null;
   className?: string;
   /** First rows in the Home grid should not lazy-load their art. */
   priority?: boolean;
-}
-
-function initialsFor(name: string): string {
-  return name
-    .replace(/^(the|a|an)\s+/i, "")
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((word) => word[0])
-    .join("")
-    .toUpperCase();
 }
 
 function TicketArt({ title, priority }: { title: TitleSummary; priority?: boolean }) {

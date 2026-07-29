@@ -297,7 +297,72 @@ pointing at the other.
 
 ---
 
-## Local persistence
+## Pages — Home and title detail
+
+### Error handling is two layers, not one
+
+`error.tsx` is **not** where content failures are handled, and it can't be.
+Next serializes a Server Component error down to a generic message plus a
+digest before it reaches the client boundary — deliberately, so server
+internals don't leak — which means **`ContentError.kind` cannot survive the
+trip**. An error boundary can only ever say "something went wrong".
+
+So there are two layers, and they are not alternatives:
+
+| Layer | Handles | Sees `kind`? |
+|---|---|---|
+| `catch` at the call site → `ContentErrorState` | expected provider failures | yes |
+| `app/error.tsx` (`unstable_retry`) | genuine render bugs | no |
+
+`ContentErrorState` (`components/content/`) owns every `kind` → copy mapping in
+one place, and suppresses the retry button for kinds where retrying is
+pointless (`unauthorized`, `not_found`). Retry is `router.refresh()` in a
+client component, which re-runs the server render — not `location.reload()`.
+
+`not_found` is special-cased to `notFound()` rather than an error panel: a bad
+title id is a routing outcome, not a failure. Note that Next returns **HTTP 200
+for a streamed 404** and 404 only for non-streamed ones — that is documented
+behaviour, not a bug to chase.
+
+**Only the `await` goes inside the `try`.** JSX built in a `try` block is a
+trap: React doesn't render the returned element until after the function has
+returned, so render errors sail straight past that `catch`. eslint's
+`react-hooks/error-boundaries` rule enforces this and will fail the lint.
+
+### The Phase 4 theming root
+
+`app/title/[mediaType]/[id]/page.tsx` wraps its entire output in
+`<div data-title-theme style={{ "--title-art-from", "--title-art-to" }}>`.
+
+That element is the seam Phase 4 plugs into: it will set `--accent-primary` /
+`--accent-secondary` there from extracted artwork colours, and every
+`bg-accent` / `text-accent` / `border-accent` beneath re-tints with no
+component changes. The two `--title-art-*` properties already do exactly this
+in miniature — per-title values set on the wrapper, consumed by the hero wash —
+so Phase 4 needs no new mechanism, just more properties on the same element.
+
+Verified live, not assumed: overriding `--accent-primary` on that wrapper
+retinted the rating badge inside it (gold → green) while the sidebar wordmark
+outside it stayed unchanged.
+
+### Grid geometry has one definition
+
+`TITLE_GRID_CLASS` in `lib/utils/grid.ts` is imported by **both** `TitleGrid`
+and `SkeletonGrid`. The skeleton is a Suspense fallback swapped for the real
+grid mid-paint, so a column-count difference between them shows up as a visible
+reflow at the worst possible moment. Don't inline the classes in either one.
+
+Likewise `initialsFor()` in `lib/utils/initials.ts` is shared by TicketCard and
+the detail-page poster, so a title's fallback monogram is identical in the grid
+and on its own page.
+
+---
+
+## Local persistence — **planned, not built**
+
+`lib/storage/` does not exist yet. Phase 1 had nothing to persist, so it was
+deliberately deferred to Phase 2, where watchlist/watched state needs it. The
+shape below is the decision that's already been made; only the code is pending.
 
 An **async** key-value interface with a localStorage driver.
 
@@ -313,8 +378,8 @@ with a sync one it is a refactor of every call site.
 
 | Phase | Scope |
 |---|---|
-| **1** *(current)* | Foundation: content abstraction + both providers, design system, app shell, Home, detail page |
-| 2 | Search, My Library, watchlist/watched state |
+| 1 *(done)* | Foundation: content abstraction + both providers, design system, app shell, Home, detail page |
+| **2** *(current)* | Search, My Library, watchlist/watched state |
 | 3 | Episode-level progress, "Up Next" engine |
 | 4 | Rich detail pages with artwork-derived dynamic theming |
 | 5 | XP, levels, streaks, badges; PWA manifest + service worker |
@@ -333,9 +398,12 @@ do not implement them early.
 - [x] **Step 2** — Content layer: types, interface, errors, mock provider + catalog
 - [x] **Step 3** — TMDB provider, normalization, `server-only` guards
 - [x] **Step 4** — Design system: Button, Card, Badge, Tabs, Skeleton, EmptyState, TicketCard
-      *(temporary `/styleguide` route — delete in Step 6)*
+      *(the temporary `/styleguide` route was deleted in Step 6)*
 - [x] **Step 5** — App shell: nav, four routes, footer
-- [ ] **Step 6** — Home (trending grid) + `/title/[mediaType]/[id]`
+- [x] **Step 6** — Home (trending grid) + `/title/[mediaType]/[id]`
+
+**Phase 1 is complete.** Next work belongs to Phase 2 (search, library,
+watchlist/watched state) — see the roadmap above.
 
 ---
 

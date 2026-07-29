@@ -1,6 +1,7 @@
 import type { HTMLAttributes } from "react";
 
 import { cn } from "@/lib/utils/cn";
+import { TITLE_GRID_CLASS } from "@/lib/utils/grid";
 
 /**
  * Loading placeholder.
@@ -81,10 +82,8 @@ export function SkeletonGrid({
       role="status"
       aria-live="polite"
       aria-busy="true"
-      className={cn(
-        "grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5",
-        className,
-      )}
+      // Shared with TitleGrid on purpose — see the note in lib/utils/grid.ts.
+      className={cn(TITLE_GRID_CLASS, className)}
     >
       <span className="sr-only">{label}</span>
       {Array.from({ length: count }, (_, i) => (
