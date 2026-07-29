@@ -167,18 +167,80 @@ If duplicate same-URL fetches inside one render become a real problem, wrap the
 provider methods in React's `cache()` — that dedupes regardless of the signal.
 Do not solve it by removing the timeout.
 
-### Client-side data seam (not built yet — Phase 2)
+### Client-side data seam — built (Phase 2 Step 1)
 
-Phase 1 pages are Server Components that call the provider directly, so no API
-routes exist. Search-as-you-type needs client-side fetching. When that lands:
+Server Components call `getContentProvider()` directly. Client Components
+import `httpProvider` from `lib/content/http/`, which implements the **same**
+`ContentProvider` interface by fetching `app/api/content/*`. Same contract,
+same domain types, same `ContentError` kinds — the transport is the only
+difference.
 
-1. Add route handlers under `app/api/content/*` that call
-   `getContentProvider()` server-side and return normalized JSON.
-2. Add `lib/content/http/` — an `httpProvider` implementing the **same**
-   `ContentProvider` interface by fetching those routes.
+```
+app/api/content/
+  trending/                                    getTrending
+  search/                                      searchTitles
+  title/[mediaType]/[id]/                      getTitle
+  title/[mediaType]/[id]/similar/              getSimilar
+  title/[mediaType]/[id]/recommendations/      getRecommendations
+  title/[mediaType]/[id]/watch-providers/      getWatchProviders
+  tv/[showId]/seasons/                         getSeasons
+  tv/[showId]/seasons/[seasonNumber]/          getSeasonEpisodes
 
-Client components then get the identical interface. Do **not** solve this by
-importing the TMDB provider into a client component.
+lib/api/validate.ts   Untrusted-input parsing; throws BadRequestError
+lib/api/respond.ts    jsonOk / handleRouteError; server-only
+lib/content/http/
+  wire.ts             Error envelope + kind<->status maps. Shared by BOTH
+                      sides, so it must stay free of `server-only`.
+  index.ts            httpProvider. The ONE content module a Client
+                      Component may import.
+```
+
+Three rules that are load-bearing:
+
+1. **`lib/content/http/` must never import `getContentProvider`, `tmdbProvider`,
+   or anything under `lib/content/tmdb/`.** Doing so drags server-only code
+   into the client graph and fails the build. Verified by deliberately adding
+   such an import — the build failed with a full import trace naming the
+   offending client component.
+2. **Route handlers never forward an upstream message.** `tmdbProvider` folds
+   TMDB's own `status_message` into `ContentError.message`; `handleRouteError`
+   logs that server-side and sends only the fixed string from `SAFE_MESSAGE`.
+   Verified with a deliberately invalid token: the response body was
+   `{"kind":"unauthorized","message":"The content source rejected the request."}`
+   while `Invalid API key: You must be granted a valid key` appeared only in
+   the server log.
+3. **Validation errors are `BadRequestError`, not `ContentError`.** A malformed
+   request is the caller's bug, not a content-source failure. Collapsing the
+   two would make `ContentErrorKind` mean two different things. They surface as
+   HTTP 400.
+
+`unauthorized` maps to **502, not 401** — the caller isn't unauthorized, our
+upstream credential is. See the comment on `KIND_STATUS` in `wire.ts`.
+
+A blank search query returns an empty page rather than a 400, because that is
+what `mockProvider` and `tmdbProvider` both do. The HTTP transport must not be
+the odd one out — that is the whole point of the interface.
+
+### These routes are a public surface — Phase 6 owes them rate limiting
+
+Once deployed, `app/api/content/*` is callable by anyone who finds the URL, not
+just by our own client code. There is **no rate limiting, no auth, and no
+abuse protection on them today.** That is acceptable for a personal,
+unadvertised deployment and is not acceptable indefinitely.
+
+What already limits the blast radius:
+
+- Every response sets `s-maxage` (see `CACHE_SECONDS`), so repeated identical
+  requests are absorbed by the CDN rather than reaching TMDB.
+- `next.revalidate` on the TMDB fetches caches upstream results independently.
+- Input validation caps `page` at 500 and `query` at 200 characters, so a
+  single request can't ask for something unbounded.
+
+What is still missing, and belongs with Phase 6 (accounts/Supabase, where
+per-user identity finally exists): real per-IP or per-user rate limiting on
+these routes. Without it a determined caller can still burn our TMDB quota via
+cache-missing queries — a unique `?query=` string per request defeats every
+cache layer listed above. Do not treat the caching as a substitute.
 
 ---
 
@@ -402,8 +464,20 @@ do not implement them early.
 - [x] **Step 5** — App shell: nav, four routes, footer
 - [x] **Step 6** — Home (trending grid) + `/title/[mediaType]/[id]`
 
-**Phase 1 is complete.** Next work belongs to Phase 2 (search, library,
-watchlist/watched state) — see the roadmap above.
+**Phase 1 is complete.**
+
+## Phase 2 status
+
+- [x] **Step 1** — Client data seam: `app/api/content/*` route handlers +
+      `lib/content/http/httpProvider`
+- [ ] **Step 2** — `lib/storage/` — the async KV interface (see *Local
+      persistence* above; still not built)
+- [ ] **Step 3** — Watchlist / watched state on top of that storage
+- [ ] **Step 4** — Search UI, wired to `httpProvider.searchTitles`
+
+Search UI comes last deliberately: it is the easy part once the transport and
+storage exist, and building it first would have tempted a shortcut around the
+provider abstraction.
 
 ---
 
