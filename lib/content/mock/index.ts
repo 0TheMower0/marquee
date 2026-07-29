@@ -20,11 +20,32 @@ const PAGE_SIZE = 20;
 const MIN_LATENCY_MS = 180;
 const MAX_LATENCY_MS = 420;
 
-/** Deliberate artificial delay so loading skeletons are actually visible in
- *  dev instead of resolving instantly — a real API never would. */
-function simulateLatency(): Promise<void> {
+/**
+ * Deliberate artificial delay so loading skeletons are actually visible in
+ * dev instead of resolving instantly — a real API never would.
+ *
+ * Accepts an optional `signal` so `searchTitles` can honor cancellation (see
+ * the doc on `SearchTitlesOptions.signal` in provider.ts) — without this,
+ * testing "cancel in-flight requests" against the *default* provider
+ * wouldn't demonstrate anything, since mock mode is what runs out of the box.
+ */
+function simulateLatency(signal?: AbortSignal): Promise<void> {
   const ms = MIN_LATENCY_MS + Math.random() * (MAX_LATENCY_MS - MIN_LATENCY_MS);
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      },
+      { once: true },
+    );
+  });
 }
 
 function hydrate(entry: CatalogEntry): Title {
@@ -114,7 +135,7 @@ function synthesizeEpisodes(entry: CatalogEntry, season: Season): Episode[] {
 
 export const mockProvider: ContentProvider = {
   async searchTitles(query, options: SearchTitlesOptions = {}) {
-    await simulateLatency();
+    await simulateLatency(options.signal);
     const q = query.trim().toLowerCase();
 
     // A blank query returns nothing, NOT the whole catalog. TMDB rejects an

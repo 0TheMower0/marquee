@@ -655,6 +655,84 @@ case (one click, one in-flight write) is exact.
 
 ---
 
+## Search — `app/search/`
+
+```
+app/search/
+  page.tsx        thin server shell (metadata only)
+  search-view.tsx the real client component — input, filter, all fetching
+```
+
+Always goes through `httpProvider`, never `getContentProvider()` directly —
+this is the client-data-seam abstraction from Phase 2 Step 1 doing its job:
+Search needed a `signal` option on `searchTitles` to cancel in flight, and
+that went into the shared `ContentProvider` interface (`provider.ts`) rather
+than being bolted onto `httpProvider` alone, so mock/http both honor it and
+`tmdbProvider` at least documents why it doesn't (see below).
+
+### "Loading" is not a state variable — it's derived
+
+The result of a search is one object: `{ forKey, status, items, errorMessage }`,
+where `forKey` is `` `${trimmedQuery}::${mediaFilter}` ``. Render compares
+`forKey` against the *current* query/filter to decide whether the stored
+result is fresh; if it isn't (still debouncing, or a fetch is in flight, or —
+edge case — the user changed the filter faster than the last fetch
+resolved), the skeleton shows. There is no separate `isLoading` boolean.
+
+This isn't a style preference — `setStatus("loading")` as the first line of
+the effect body **fails the build**: eslint's `react-hooks/set-state-in-effect`
+rejects synchronous `setState` in an effect's main body, precisely because
+"loading" here is fully derivable from existing state rather than needing a
+state variable of its own. Every `setResult(...)` call in this file lives
+inside a `setTimeout` callback or a `.then()`/`.catch()` — genuinely
+asynchronous continuations, which the rule allows — never at the top level of
+the effect. If you're tempted to add `useState<boolean>` for a pending flag
+here, check whether it's actually derivable first.
+
+### Cancellation is two layers, and the second one matters more
+
+1. **A real `AbortController`**, created per search and aborted in the
+   effect's cleanup. Because React runs cleanup before the next effect fires,
+   this alone cancels the previous request the instant the query or filter
+   changes — no manual "abort the last one" bookkeeping needed.
+2. **A request-id ref**, incremented per attempt; a `.then()`/`.catch()`
+   discards its own result if the id has moved on.
+
+Layer 2 is not redundant. `tmdbProvider.searchTitles` deliberately does not
+act on `options.signal` (see the comment there) — extending it would mean
+threading the incoming request's signal through
+`app/api/content/search/route.ts` *and* `tmdbFetch`'s own timeout-signal
+handling, which is real plumbing that belongs to the Step 1 client-data-seam
+layer, not to building the search page. In TMDB mode, a stale request
+therefore keeps running to completion and wastes the round trip — but its
+result can never reach the screen, because layer 2 catches it regardless of
+whether layer 1 actually stopped anything. Verified directly: a search whose
+response was artificially held back until *after* a second, faster search had
+already rendered did not overwrite it when finally released.
+
+`SearchTitlesOptions.signal` is documented (in `provider.ts`) as allowed to
+reject with the signal's own abort reason rather than a `ContentError` — an
+aborted call isn't a content failure, it's the caller withdrawing the
+request, and the request-id guard discards it either way without needing to
+inspect what it rejected with.
+
+### Three states, one thing in common: never blank
+
+Idle (nothing typed), no results, and a fetch failure are all rendered
+through `EmptyState`, same as everywhere else in the app. There's no fourth,
+implicit "nothing rendered" branch — the `content` variable is assigned in
+every branch of the if/else chain, with `results` as the trailing `else`.
+
+### Tracking buttons work here for free
+
+Search results are `TicketCard`s from the same `TitleGrid` component Home and
+My Library use, so the watchlist quick-toggle from Phase 2 Step 3 is already
+wired in — no search-specific tracking code exists. This is the payoff of
+routing everything through one card component rather than a search-specific
+result row.
+
+---
+
 ## Phase roadmap
 
 | Phase | Scope |
@@ -695,11 +773,10 @@ do not implement them early.
 - [x] **Step 3** — Watchlist / watched state: `lib/tracking/`, optimistic UI
       with visible rollback, TicketCard quick-toggle, detail-page controls,
       My Library's three sections
-- [ ] **Step 4** — Search UI, wired to `httpProvider.searchTitles`
+- [x] **Step 4** — Search UI: `app/search/`, debounced + cancellable, three
+      EmptyState-backed states, media-type filter, tracking-enabled results
 
-Search UI comes last deliberately: it is the easy part once the transport and
-storage exist, and building it first would have tempted a shortcut around the
-provider abstraction.
+**Phase 2 is complete.**
 
 ---
 

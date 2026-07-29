@@ -64,6 +64,16 @@ export const tmdbProvider: ContentProvider = {
     // mockProvider's behaviour so the two stay interchangeable.
     if (!trimmed) return emptyPage<TitleSummary>();
 
+    // NOTE: options.signal is intentionally not honored here. tmdbFetch's
+    // signal is its own request timeout, and combining an external one would
+    // also need the incoming request's signal forwarded through
+    // app/api/content/search/route.ts — real plumbing that belongs to the
+    // client-data-seam layer (Phase 2 Step 1), not this feature. See the doc
+    // on SearchTitlesOptions.signal in provider.ts. In practice this is
+    // harmless: the Search page's own request-id guard discards a stale
+    // TMDB-mode response regardless of whether the underlying request was
+    // ever actually cancelled.
+
     const path =
       options.mediaType === "movie"
         ? "/search/movie"

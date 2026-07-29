@@ -11,6 +11,29 @@ import type {
 export interface SearchTitlesOptions {
   mediaType?: MediaType;
   page?: number;
+  /**
+   * Lets a caller cancel an in-flight search. The Search page aborts the
+   * previous request every time the query or filter changes, so a slow
+   * early response can never overwrite a faster later one.
+   *
+   * A provider honoring this MAY reject with the signal's own abort reason
+   * (typically a `DOMException` named `"AbortError"`) instead of a
+   * `ContentError` — a deliberate, narrow exception to "every method rejects
+   * with ContentError only" below. An aborted call isn't a content failure,
+   * it's the caller withdrawing the request, and the caller is expected to
+   * recognize and discard it (e.g. via a request-id guard) rather than
+   * render it as an error.
+   *
+   * `mockProvider` and `httpProvider` — the two paths the Search page
+   * actually exercises client-side — both honor it. `tmdbProvider` accepts
+   * but does not act on it: real cancellation there would mean extending the
+   * shared `tmdbFetch` helper's signal handling *and* forwarding the
+   * incoming request's signal through the `/api/content/search` route
+   * handler — genuine plumbing that belongs to the client-data-seam layer
+   * (Phase 2 Step 1), not to the search page itself. See the note in
+   * `tmdb/index.ts`.
+   */
+  signal?: AbortSignal;
 }
 
 export interface TrendingOptions {

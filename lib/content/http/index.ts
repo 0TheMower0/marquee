@@ -82,15 +82,30 @@ async function toContentError(response: Response): Promise<ContentError> {
 async function apiFetch<T>(
   path: string,
   params?: Record<string, QueryValue>,
+  externalSignal?: AbortSignal,
 ): Promise<T> {
   let response: Response;
+
+  // Combined so either source can abort: the caller's own cancellation (the
+  // Search page aborting a stale request) or our internal ceiling on a hung
+  // connection. AbortSignal.any is the same platform-API vintage as
+  // AbortSignal.timeout, already relied on above.
+  const signal = externalSignal
+    ? AbortSignal.any([externalSignal, AbortSignal.timeout(TIMEOUT_MS)])
+    : AbortSignal.timeout(TIMEOUT_MS);
 
   try {
     response = await fetch(buildUrl(path, params), {
       headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal,
     });
   } catch (cause) {
+    // An externally aborted request (the caller cancelled it) is not a
+    // content failure — rethrow as-is so the caller's own cancellation
+    // detection (a request-id guard) can recognize and silently discard it,
+    // rather than dressing it up as a ContentError('network') the UI would
+    // have to explain to the user.
+    if (externalSignal?.aborted) throw cause;
     // Never reached our server: offline, DNS failure, or the timeout above.
     throw new ContentError(
       "network",
@@ -126,11 +141,15 @@ export const httpProvider: ContentProvider = {
       return { items: [], page: 1, totalPages: 1, totalResults: 0 };
     }
 
-    return apiFetch<PagedResult<TitleSummary>>("/search", {
-      query: query.trim(),
-      mediaType: options.mediaType,
-      page: options.page,
-    });
+    return apiFetch<PagedResult<TitleSummary>>(
+      "/search",
+      {
+        query: query.trim(),
+        mediaType: options.mediaType,
+        page: options.page,
+      },
+      options.signal,
+    );
   },
 
   async getTrending(
