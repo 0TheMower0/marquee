@@ -64,8 +64,13 @@ lib/content/
   shared/       Code both providers legitimately need — currently just
                 placeholder.ts (deterministic gradient-from-id), reused by
                 tmdbProvider as its no-poster-image fallback in Step 3.
-  mock/         mockProvider — ~25 hand-authored titles, full episode lists for
-                two shows, CSS-gradient art, simulated latency. Zero network.
+  mock/         mockProvider — ~25 hand-authored titles, full hand-authored
+                season/episode data for 5 TV shows chosen to exercise
+                distinct Up Next edge cases (currently airing, a Season 0,
+                a canceled/truncated final season, ...) plus real per-season
+                episode-count "shapes" for 6 more long-running shows — see
+                the header comment in mock/episodes.ts. CSS-gradient art,
+                simulated latency. Zero network.
   tmdb/         tmdbProvider — real TMDB v3 endpoints, v4 Bearer auth.
   index.ts      getContentProvider() — selects on NEXT_PUBLIC_CONTENT_PROVIDER,
                 defaults to 'mock'.

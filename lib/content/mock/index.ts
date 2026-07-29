@@ -91,12 +91,113 @@ function requireEntry(id: string, mediaType: MediaType): CatalogEntry {
 }
 
 /**
+ * Real per-season episode counts and premiere dates for shows that don't
+ * have individually hand-authored episodes (see episodes.ts) but shouldn't
+ * be flattened into a naive even split either. "Wildly different episode
+ * counts per season" is a real, well-documented fact about most of these
+ * shows — Breaking Bad's first season really does have 7 episodes against
+ * its last season's 16 — so there's no reason to fabricate a uniform split
+ * when the real numbers are just as easy to supply, and they sum to exactly
+ * the catalog's existing episodeCount for each show (verified, not assumed).
+ *
+ * Individual episodes within each season are still synthesized generically
+ * (see synthesizeEpisodes) — only the season-level shape and premiere date
+ * are real here. A show with no entry below (Grey's Anatomy) falls all the
+ * way through to the naive even split, which is the deliberate "nothing
+ * special" control — not every show needs to demonstrate something.
+ */
+const SEASON_SHAPES: Record<
+  string,
+  {
+    episodeCounts: number[];
+    premiereDates: string[];
+    /** Applied uniformly to every synthesized episode of this show. */
+    runtimeMinutes: number;
+  }
+> = {
+  "breaking-bad": {
+    episodeCounts: [7, 13, 13, 13, 16],
+    premiereDates: [
+      "2008-01-20",
+      "2009-03-08",
+      "2010-03-21",
+      "2011-07-17",
+      "2012-07-15",
+    ],
+    runtimeMinutes: 47,
+  },
+  "the-wire": {
+    episodeCounts: [13, 12, 12, 13, 10],
+    premiereDates: [
+      "2002-06-02",
+      "2003-06-01",
+      "2004-09-19",
+      "2006-09-10",
+      "2008-01-06",
+    ],
+    runtimeMinutes: 59,
+  },
+  "game-of-thrones": {
+    episodeCounts: [10, 10, 10, 10, 10, 10, 7, 6],
+    premiereDates: [
+      "2011-04-17",
+      "2012-04-01",
+      "2013-03-31",
+      "2014-04-06",
+      "2015-04-12",
+      "2016-04-24",
+      "2017-07-16",
+      "2019-04-14",
+    ],
+    runtimeMinutes: 57,
+  },
+  "stranger-things": {
+    episodeCounts: [8, 9, 8, 9],
+    premiereDates: ["2016-07-15", "2017-10-27", "2019-07-04", "2022-05-27"],
+    runtimeMinutes: 60,
+  },
+  "the-office-us": {
+    episodeCounts: [6, 22, 25, 19, 28, 26, 26, 24, 25],
+    premiereDates: [
+      "2005-03-24",
+      "2005-09-20",
+      "2006-09-21",
+      "2007-09-27",
+      "2008-09-25",
+      "2009-09-17",
+      "2010-09-23",
+      "2011-09-22",
+      "2012-09-20",
+    ],
+    runtimeMinutes: 22,
+  },
+  "avatar-the-last-airbender": {
+    episodeCounts: [20, 20, 21],
+    premiereDates: ["2005-02-21", "2006-03-17", "2007-09-21"],
+    runtimeMinutes: 23,
+  },
+};
+
+/**
  * Even split of episodeCount across seasonCount, remainder front-loaded onto
  * earlier seasons (most shows taper off in later seasons, not grow). Air
- * dates are unknown at this granularity, so left null rather than guessed —
- * only the 2 hand-authored shows in episodes.ts have real dates.
+ * dates are unknown at this granularity, so left null rather than guessed.
+ * Used only for a show with neither a SEASON_SHAPES entry (above) nor a fully
+ * hand-authored one (episodes.ts).
  */
 function synthesizeSeasons(entry: CatalogEntry): Season[] {
+  const shape = SEASON_SHAPES[entry.id];
+  if (shape) {
+    return shape.episodeCounts.map((episodeCount, i) => ({
+      seasonNumber: i + 1,
+      name: `Season ${i + 1}`,
+      overview: `Season ${i + 1} of ${entry.name}.`,
+      episodeCount,
+      airDate: shape.premiereDates[i] ?? null,
+      posterUrl: null,
+    }));
+  }
+
   const seasonCount = entry.seasonCount ?? 0;
   const episodeCount = entry.episodeCount ?? 0;
   const base = Math.floor(episodeCount / Math.max(1, seasonCount));
@@ -116,6 +217,11 @@ function synthesizeSeasons(entry: CatalogEntry): Season[] {
 }
 
 function synthesizeEpisodes(entry: CatalogEntry, season: Season): Episode[] {
+  // Real per-episode dates are only modeled for the 5 fully hand-authored
+  // shows in episodes.ts — at this tier, only the season's own premiere
+  // date (above) is real, so individual episodes stay dateless.
+  const runtimeMinutes = SEASON_SHAPES[entry.id]?.runtimeMinutes ?? null;
+
   return Array.from({ length: season.episodeCount }, (_, i) => {
     const episodeNumber = i + 1;
     return {
@@ -127,7 +233,7 @@ function synthesizeEpisodes(entry: CatalogEntry, season: Season): Episode[] {
       name: `Episode ${episodeNumber}`,
       overview: `Episode ${episodeNumber} of ${entry.name} season ${season.seasonNumber}.`,
       airDate: null,
-      runtimeMinutes: null,
+      runtimeMinutes,
       stillUrl: null,
     };
   });

@@ -513,9 +513,15 @@ export const MOCK_CATALOG: CatalogEntry[] = [
     backdropUrl: null,
     rating: 8.1,
     runtimeMinutes: null,
+    // seasonCount/episodeCount/status deliberately diverge from the real show
+    // (real S4 "Night Country" ran 6 episodes and the anthology's future is
+    // genuinely undetermined) — this is the mock catalog's "ended mid-season,
+    // no more episodes coming" test case: a final season shorter than every
+    // season before it, with status flipped to "canceled" rather than
+    // "returning". See episodes.ts for the full breakdown.
     seasonCount: 4,
-    episodeCount: 33,
-    status: "returning",
+    episodeCount: 14,
+    status: "canceled",
     cast: [
       member("matthew-mcconaughey", "Matthew McConaughey", "Rust Cohle", 0),
       member("woody-harrelson", "Woody Harrelson", "Marty Hart", 1),
@@ -558,8 +564,13 @@ export const MOCK_CATALOG: CatalogEntry[] = [
     backdropUrl: null,
     rating: 8.6,
     runtimeMinutes: null,
-    seasonCount: 3,
-    episodeCount: 28,
+    // Season 4 here is invented for this mock catalog — the real show's
+    // actual future seasons aren't knowable or relevant to a local dev
+    // fixture. It's the "currently airing, next episode date in the
+    // future" test case: three aired episodes plus one dated after today.
+    // See episodes.ts.
+    seasonCount: 4,
+    episodeCount: 13,
     status: "returning",
     cast: [
       member(
@@ -607,8 +618,12 @@ export const MOCK_CATALOG: CatalogEntry[] = [
     backdropUrl: null,
     rating: 8.8,
     runtimeMinutes: null,
+    // episodeCount covers only the two numbered seasons — a Season 0
+    // "Specials" also exists in episodes.ts (2 bonus episodes) and is
+    // deliberately excluded from this total, matching how TMDB itself
+    // usually keeps `number_of_episodes` scoped to numbered seasons.
     seasonCount: 2,
-    episodeCount: 30,
+    episodeCount: 9,
     status: "ended",
     cast: [
       member("kyle-maclachlan", "Kyle MacLachlan", "Dale Cooper", 0),
