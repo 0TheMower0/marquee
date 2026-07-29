@@ -5,6 +5,7 @@ import "./globals.css";
 import { BottomNav } from "@/components/shell/bottom-nav";
 import { Footer } from "@/components/shell/footer";
 import { Sidebar } from "@/components/shell/sidebar";
+import { TrackingProvider } from "@/lib/tracking";
 
 /**
  * Fonts are self-hosted at build time by next/font — no runtime request to
@@ -75,7 +76,11 @@ export default function RootLayout({
             tabIndex={-1}
             className="flex-1 pb-24 lg:pb-0"
           >
-            {children}
+            {/* Scoped to <main> rather than the whole body: everything that
+                reads tracking state today (TicketCard, the title detail page,
+                My Library) renders inside it. Move this outward if Sidebar or
+                BottomNav ever need it too (e.g. a library item count). */}
+            <TrackingProvider>{children}</TrackingProvider>
           </main>
           <Footer />
         </div>

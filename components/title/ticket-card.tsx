@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { TrackingBadge } from "@/components/tracking/tracking-badge";
 import { cn } from "@/lib/utils/cn";
 import { initialsFor } from "@/lib/utils/initials";
 import type { TitleSummary } from "@/lib/content/types";
@@ -119,25 +120,32 @@ export function TicketCard({
       ? null
       : (href ?? `/title/${title.mediaType}/${title.id}`);
 
-  if (!resolvedHref) {
-    return <article className={cn("block", className)}>{inner}</article>;
-  }
-
   return (
-    <article className={cn("block", className)}>
-      <Link
-        href={resolvedHref}
-        // rounded-lg + offset keeps the focus ring hugging the ticket shape
-        // rather than drawing a box far outside it.
-        className="block rounded-lg focus-visible:outline-offset-4"
-      >
-        {/* No aria-hidden wrapper here on purpose. `truncate` is CSS-only, so
-            the full title stays in the DOM; letting the link derive its
-            accessible name from the real content yields
-            "The Godfather 1972 · Film ★ 9.2" and keeps the <h3> in the
-            heading outline. */}
-        {inner}
-      </Link>
+    <article className={cn("relative block", className)}>
+      {resolvedHref ? (
+        <Link
+          href={resolvedHref}
+          // rounded-lg + offset keeps the focus ring hugging the ticket shape
+          // rather than drawing a box far outside it.
+          className="block rounded-lg focus-visible:outline-offset-4"
+        >
+          {/* No aria-hidden wrapper here on purpose. `truncate` is CSS-only,
+              so the full title stays in the DOM; letting the link derive its
+              accessible name from the real content yields
+              "The Godfather 1972 · Film ★ 9.2" and keeps the <h3> in the
+              heading outline. */}
+          {inner}
+        </Link>
+      ) : (
+        inner
+      )}
+
+      {/* A SIBLING of the Link, never nested inside it — a <button> inside an
+          <a> is invalid HTML and double-fires navigation on click. Sitting on
+          top physically (z-10) means a click on the badge itself lands on the
+          badge, not the Link underneath; everywhere else on the card still
+          navigates normally. */}
+      <TrackingBadge title={title} className="absolute top-2 right-2 z-10" />
     </article>
   );
 }

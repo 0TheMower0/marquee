@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { ContentErrorState } from "@/components/content/content-error-state";
+import { TrackingActions } from "@/components/tracking/tracking-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getContentProvider } from "@/lib/content";
@@ -245,10 +246,12 @@ export default async function TitleDetailPage({
           </p>
         </section>
 
-        {/* Tracking actions land in Phase 2; the detail page gets cast, seasons,
-            episodes and watch providers in Phase 4. Nothing is stubbed in here
-            for them on purpose — an inert "Add to watchlist" button that does
-            nothing is worse than no button. */}
+        <section aria-label="Track this title" className="mt-8">
+          <TrackingActions title={title} />
+        </section>
+
+        {/* Cast, seasons, episodes and watch providers arrive in Phase 4.
+            Nothing is stubbed in here for them on purpose. */}
         <div className="mt-10">
           <Button href="/" variant="ghost">
             ← Back to trending

@@ -570,6 +570,91 @@ device-local; revisit alongside Phase 6 accounts, where sync arrives anyway.
 
 ---
 
+## Watchlist / watched state — `lib/tracking/`
+
+```
+lib/tracking/
+  types.ts   TrackingStatus, TrackingEntry, toTrackingSummary(), entryKey()
+  store.ts   trackingStore — a lib/storage Store<TrackingEntry>, version 1
+  context.tsx  TrackingProvider + useTracking() — optimistic writes, rollback
+  index.ts   public surface; import from here
+
+components/tracking/
+  tracking-badge.tsx    TicketCard's corner quick-toggle (watchlist only)
+  tracking-actions.tsx  the full status control on the title detail page
+```
+
+`TrackingProvider` wraps `{children}` inside `<main>` in `app/layout.tsx` —
+scoped there, not the whole `<body>`, because everything that currently reads
+tracking state (TicketCard, My Library, the detail page) renders inside it.
+Move it outward the day Sidebar or BottomNav need it too (an item-count badge,
+say) — nothing about the provider itself assumes where it's mounted.
+
+### One status, not two flags
+
+`TrackingEntry.status` is `"watchlist" | "watching" | "watched"` — one field,
+mutually exclusive by construction, matching the three sections of My Library
+exactly. It is **not** a `watchlisted: boolean` plus a `watched: boolean`.
+Setting a new status always replaces whatever came before; a title cannot be
+simultaneously on the watchlist and marked watched. This was a deliberate
+modeling choice, not an oversight — the three-section Library page is the
+tell that the domain itself only has one status at a time.
+
+`"Watching"` is offered only for TV (`TrackingActions` filters it out for a
+movie). Phase 2 has no in-progress/position tracking at all — a movie is
+watched in one sitting — so a "Watching" button for a movie would be present
+and do nothing meaningful. Not shown beats shown-and-inert.
+
+### Snapshots, not references
+
+Each `TrackingEntry` stores a `TitleSummary` **snapshot** taken at the moment
+of tracking (`toTrackingSummary()`, an explicit allowlist — the same pattern
+as `mock/index.ts`'s `toSummary()`, for the same reason: spread-and-omit would
+let a future `Title` field leak into every stored record without anyone
+deciding it should). My Library renders directly from these snapshots rather
+than re-fetching every tracked title from the provider on every visit, which
+would be N calls for one page load. The tradeoff, stated plainly: a poster or
+rating shown in My Library can go stale if the source data changes later. The
+title detail page is unaffected — it always fetches a fresh `Title`
+regardless of what's cached in a tracking entry.
+
+### The corner badge is watchlist-only, on purpose
+
+`TrackingBadge` (the TicketCard quick-toggle) only ever adds/removes
+`"watchlist"`. Once a title is `"watching"` or `"watched"`, the badge renders
+as a plain non-interactive indicator (`pointer-events: none`) — a check or eye
+icon, not a button. A dense grid is exactly the wrong place for one mistap to
+erase watched progress; changing those statuses requires the full control on
+the detail page, which has room to ask more deliberately.
+
+Structurally, `TrackingBadge` is a **sibling of TicketCard's `<Link>`, not
+nested inside it** (`absolute` positioned, `z-10`, layered on top). A
+`<button>` inside an `<a>` is invalid HTML and double-fires navigation on
+click; siblings-with-layering avoids that outright rather than papering over
+it with `stopPropagation`.
+
+### Optimistic UI, and what "roll back visibly" means concretely
+
+`setStatus()` / `remove()` on the tracking context update React state
+**before** the storage write is even attempted, then await the write. On
+failure they revert to the pre-optimistic snapshot and rethrow — callers are
+expected to catch this and show something, which both `TrackingBadge` and
+`TrackingActions` do: buttons flip back to their prior state, plus a visible
+error (`role="alert"` text on the detail page; a `border-danger` flash plus a
+screen-reader-only `role="status"` announcement on the compact badge, since
+there's no room there for visible prose). The error clears itself after a few
+seconds rather than sitting indefinitely.
+
+Concurrency note, stated honestly rather than hidden: the rollback snapshot is
+whatever `entries` was at the moment a specific call started, not whatever it
+is when the write settles. Two concurrent writes to different keys can each
+roll back over the other's optimistic update if both happen to fail around the
+same time. Out of scope for Phase 2, which has no mutation queue — each caller
+also disables its own control while its write is pending, so the actual common
+case (one click, one in-flight write) is exact.
+
+---
+
 ## Phase roadmap
 
 | Phase | Scope |
@@ -607,7 +692,9 @@ do not implement them early.
 - [x] **Step 2** — `lib/storage/` — async KV layer: namespaced keys, versioned
       envelope with lazy per-record migrations, graceful degradation,
       Date-safe serialization
-- [ ] **Step 3** — Watchlist / watched state on top of that storage
+- [x] **Step 3** — Watchlist / watched state: `lib/tracking/`, optimistic UI
+      with visible rollback, TicketCard quick-toggle, detail-page controls,
+      My Library's three sections
 - [ ] **Step 4** — Search UI, wired to `httpProvider.searchTitles`
 
 Search UI comes last deliberately: it is the easy part once the transport and
