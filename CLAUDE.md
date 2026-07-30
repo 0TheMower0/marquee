@@ -16,6 +16,7 @@ Free, ad-free, non-monetized. Not a commercial product.
 npm run dev     # dev server (Turbopack) — works with no .env file at all
 npm run build   # production build; also where client/server boundary violations fail
 npm run lint    # eslint
+npm run test    # vitest — currently just lib/tracking/upnext.ts's ranking math
 ```
 
 ---
@@ -980,7 +981,12 @@ do not implement them early.
 - [x] **Step 2** — Season/episode UI on the title detail page: Seasons tab,
       per-season accordion, episode watched toggles, "mark up to here",
       unaired-episode handling (`components/tracking/season-list.tsx`)
-- [ ] **Step 3** — The "Up Next" engine, over `nextUnwatchedEpisode`
+- [x] **Step 3** — The "Up Next" engine, over `nextUnwatchedEpisode`:
+      weighted ranking (`lib/tracking/upnext.ts`, unit-tested — this
+      introduced Vitest to the repo) surfaced as a Home rail
+      (`components/tracking/up-next-rail.tsx`)
+
+**Phase 3 is complete.**
 
 ---
 

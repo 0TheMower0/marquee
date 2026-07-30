@@ -31,6 +31,20 @@ export {
 } from "./ranges";
 export { normalizeWatchedEpisodes, trackingStore } from "./store";
 export { entryKey, toTrackingSummary } from "./types";
+export {
+  buildUpNextItem,
+  DEFAULT_EPISODE_RUNTIME_MINUTES,
+  RANKING_WEIGHTS,
+  rankUpNext,
+  REDISCOVERY_DORMANT_DAYS,
+  selectUpNextCandidates,
+} from "./upnext";
+export type {
+  RankedUpNext,
+  UpNextCandidate,
+  UpNextItem,
+  UpNextSignals,
+} from "./upnext";
 export type {
   EpisodeRange,
   MovieTrackingEntry,

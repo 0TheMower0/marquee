@@ -2,6 +2,7 @@ import { Suspense } from "react";
 
 import { ContentErrorState } from "@/components/content/content-error-state";
 import { TitleGrid } from "@/components/title/title-grid";
+import { UpNextRail } from "@/components/tracking/up-next-rail";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CompassIcon } from "@/components/ui/icons";
 import { SkeletonGrid } from "@/components/ui/skeleton";
@@ -68,6 +69,14 @@ export default function HomePage() {
           apps.
         </p>
       </header>
+
+      {/* Client-rendered — tracking data lives only in this browser's
+          storage, so a Server Component has nothing to fetch it with.
+          Renders null when there's nothing "watching" to show, so Home is
+          visually unchanged for a user with no shows in progress. */}
+      <div className="mt-8">
+        <UpNextRail />
+      </div>
 
       {/* The header paints immediately and the grid streams in behind it.
           Without this boundary the whole route would block on the provider,
