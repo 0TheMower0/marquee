@@ -25,6 +25,7 @@ import type {
   Title,
   TitleStatus,
 } from "@/lib/content/types";
+import { resolveTitleTheme, titleThemeVars } from "@/lib/theme";
 
 /** Matches the poster's w-24/sm:w-36/lg:w-44 breakpoints exactly, rather
  *  than approximating with vw — a single hero poster, unlike a grid, has a
@@ -146,26 +147,39 @@ export default async function TitleDetailPage({
 
   const { placeholder } = title;
 
+  // Phase 4 Step 2. Resolved server-side so the palette is correct in the very
+  // first paint — a client-side extraction would render brand gold and then
+  // lurch to the real colours once the poster decoded, on every navigation.
+  // Never throws; degrades to the brand palette.
+  const theme = await resolveTitleTheme(title);
+
   return (
     /* ------------------------------------------------------------------
        PHASE 4 THEMING ROOT.
-       This element is the one Phase 4 overrides. Once artwork colour
-       extraction lands it will set --accent-primary / --accent-secondary
-       here, and every bg-accent / text-accent / border-accent below will
-       re-tint with no component changes — that is what the `inline`
-       keyword on @theme in globals.css buys us (see globals.css header).
+       Setting --accent-primary / --accent-secondary here re-tints every
+       bg-accent / text-accent / border-accent below with no component
+       changes — that is what the `inline` keyword on @theme in globals.css
+       buys us (see the header comment there).
 
-       The two --title-art-* properties below are already doing that job in
-       miniature today: they are per-title values set on this wrapper and
-       consumed by the hero wash further down. Phase 4 adds accents to the
-       same object; it does not need a new mechanism.
+       The two --title-art-* properties do the same job for the hero wash.
+       They stay driven by the placeholder gradient rather than the extracted
+       accent on purpose: the wash sits behind the title text, so it must stay
+       dark, while an accent is by definition clamped bright enough to read as
+       text. They are different jobs and want different colours.
+
+       data-accent-origin is emitted for debugging and for the verification
+       pass — it distinguishes an accent sampled from real artwork from one
+       derived from the deterministic placeholder gradient.
        ------------------------------------------------------------------ */
     <div
       data-title-theme
+      data-accent-origin={theme.primaryOrigin}
+      data-secondary-origin={theme.secondaryOrigin}
       style={
         {
           "--title-art-from": placeholder.gradientFrom,
           "--title-art-to": placeholder.gradientTo,
+          ...titleThemeVars(theme),
         } as React.CSSProperties
       }
     >

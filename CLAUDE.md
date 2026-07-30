@@ -397,21 +397,26 @@ trap: React doesn't render the returned element until after the function has
 returned, so render errors sail straight past that `catch`. eslint's
 `react-hooks/error-boundaries` rule enforces this and will fail the lint.
 
-### The Phase 4 theming root
+### The theming root — now live (Phase 4 Step 2)
 
 `app/title/[mediaType]/[id]/page.tsx` wraps its entire output in
-`<div data-title-theme style={{ "--title-art-from", "--title-art-to" }}>`.
+`<div data-title-theme style={{ "--title-art-from", "--title-art-to",
+...titleThemeVars(theme) }}>`.
 
-That element is the seam Phase 4 plugs into: it will set `--accent-primary` /
-`--accent-secondary` there from extracted artwork colours, and every
-`bg-accent` / `text-accent` / `border-accent` beneath re-tints with no
-component changes. The two `--title-art-*` properties already do exactly this
-in miniature — per-title values set on the wrapper, consumed by the hero wash —
-so Phase 4 needs no new mechanism, just more properties on the same element.
+That element sets `--accent-primary` / `--accent-secondary` (plus `-hover` and
+`-dim`) from colours resolved out of the title's own artwork, and every
+`bg-accent` / `text-accent` / `border-accent` beneath re-tints with **zero**
+component changes — the payoff for the `@theme inline` decision in Phase 1
+Step 1. See `lib/theme/` below for how the colours are produced.
 
-Verified live, not assumed: overriding `--accent-primary` on that wrapper
-retinted the rating badge inside it (gold → green) while the sidebar wordmark
-outside it stayed unchanged.
+`--title-art-*` stays driven by the placeholder gradient rather than the
+extracted accent, deliberately: the hero wash sits *behind* the title text so
+it must stay dark, while an accent is by definition clamped bright enough to
+read as text on near-black. Same wrapper, two different jobs.
+
+Verified live, not assumed: on the Barbie page the wrapper computes
+`--accent-primary: #27c1fb` while the sidebar wordmark *outside* it still
+computes `#e8b33c`. Scoping works.
 
 ### Grid geometry has one definition
 
@@ -926,6 +931,128 @@ practice.
 
 ---
 
+## Per-title theming — `lib/theme/`
+
+```
+lib/theme/
+  oklch.ts      pure colour-space maths + WCAG contrast
+  harmonize.ts  clamp into the usable band, VERIFY, fall back to gold
+  extract.ts    server-only: fetch artwork, sharp decode, hue histogram
+  index.ts      resolveTitleTheme() + titleThemeVars()
+  theme.test.ts 31 tests over the two pure modules
+```
+
+`oklch.ts` and `harmonize.ts` are pure — no I/O, no React — and carry the tests.
+Only `extract.ts` touches the network, and it is `import "server-only"`.
+
+### Extraction runs server-side. That was the whole decision.
+
+The alternative is reading pixels off the loaded `<img>` with a canvas, which
+costs the server nothing. It was rejected because it guarantees the page paints
+in default gold and *then* lurches to the real palette, on every navigation —
+and for a feature whose entire point is "this page feels like this title from
+the moment you arrive", that flash isn't a blemish, it's the feature not
+working. It would also last longest on slow connections, since it can't start
+until the image has loaded.
+
+What that costs is small and, crucially, paid per *title* rather than per
+request: **3–9ms** to decode a 32×48 sample. Poster bytes sit in Next's
+persistent fetch data cache; the derived palette sits in a bounded (256-entry)
+process-local LRU in `extract.ts`.
+
+Deliberately **not** `"use cache"`: that directive requires `cacheComponents:
+true` in `next.config.ts`, which changes caching semantics for the whole app —
+far too much blast radius for one visual feature. `unstable_cache` is deprecated
+in Next 16. A cold server re-derives once, for single-digit milliseconds.
+
+Failure handling distinguishes two classes on purpose: a successful decode that
+finds no usable hue is a **permanent** property of that image and is cached (as
+null), while a fetch/decode error is **transient** and is not cached — a network
+blip must not poison a title's palette for the life of the process.
+
+### Why OKLCH, and why hue is never touched
+
+OKLCH's `L` is *perceptual*, so one lightness clamp behaves consistently across
+every hue. In HSL, yellow and blue both claim `50%` lightness while differing by
+roughly an order of magnitude in real luminance, so an HSL "safe band" would be
+readable at some hues and illegible at others.
+
+Only lightness and chroma are negotiable. **Hue is the title's identity** — it
+is the entire reason a Chernobyl page reads cold and a Barbie page reads
+electric.
+
+The band was fitted to the brand colours so extracted accents land in the same
+visual register as the designed ones:
+
+| | OKLCH |
+|---|---|
+| gold `#e8b33c` | `0.795 0.143 83.5` |
+| cyan `#35d6e8` | `0.804 0.127 206.5` |
+| **band** | **L 0.74–0.86, C 0.07–0.19** |
+
+### Clamping is NOT trusted to imply contrast
+
+This is the part to not "simplify". WCAG relative luminance is not perceptually
+uniform, so two colours at identical OKLCH lightness can differ substantially in
+measured contrast. The band gets close; only measurement is authoritative.
+
+Every candidate is verified against **both** roles the token plays — `text-accent`
+on `--bg-base`, and `--fg-on-accent` text on an `bg-accent` fill — at
+**4.5:1** (AA normal text, not the 3.0 large-text bar; `text-accent` is used at
+metadata sizes). Failing candidates get walked lighter and re-measured; if
+nothing in range passes, the caller falls back to gold.
+
+The verify loop only ever walks lightness **up**, which is correct *only because
+both reference surfaces are near-black* — raising L improves both ratios at
+once. Introduce a light surface and the two constraints start pulling apart, and
+this becomes a search rather than a walk. There's a note at the loop.
+
+Measured on real posters, worst case across every tested title: **8.03:1** —
+clears AA (4.5) and AAA (7.0).
+
+### Provenance is explicit
+
+`primaryOrigin` / `secondaryOrigin` are on the theme object and emitted as
+`data-accent-origin` / `data-secondary-origin`, because these are genuinely
+different claims and conflating them makes the feature impossible to debug:
+
+- `artwork` — sampled from the real poster (preferred) or backdrop.
+- `gradient` — sampled from the title's deterministic placeholder gradient.
+  **Mock mode always lands here**, as does a tmdb title whose artwork yields
+  nothing. Not extracted from any image.
+- `derived` (secondary only) — no honest second hue existed, so this is the
+  primary's hue rotated 150° (split-complement: reliably distinct without the
+  vibration of an exact 180°). A design derivation, not an observation.
+- `fallback` — brand palette.
+
+Mock mode uses gradients rather than gold-for-everything so the feature is
+actually visible offline; the gradient path runs the *identical* clamp-and-verify,
+so it is held to exactly the same accessibility bar.
+
+### Extraction tuning, and one bug worth remembering
+
+Pixels are binned into 24 hue buckets, weighted by **chroma squared** so a small
+vivid region outranks a large muted one. Letterbox black (`L<0.12`), blown
+highlights (`L>0.95`) and greys (`C<0.02`) are dropped — they're properties of
+the crop, not the artwork. If fewer than 5% of usable pixels carry any hue the
+image is achromatic and the result is `null` (Schindler's List measures ~1%);
+that's the difference between *near*-monochrome, whose faint hue gets amplified
+to the chroma floor, and *truly* achromatic, which has nothing to extract.
+
+Each bin's representative is **one real pixel** — ranked by chroma, 85th
+percentile — using **both that pixel's L and its C together**. Percentiling L
+and C independently synthesizes a colour from two different pixels that may
+appear nowhere in the artwork, and in practice grabs the palest highlights of
+the hue: it turned Spider-Verse's night-blue into a washed-out `#add6fe` where
+the correct answer is `#7fb0de`. That bug shipped into the first draft and was
+caught by diffing live output against the pre-measured prototype, not by any
+test. Don't "tidy" that back into parallel arrays.
+
+Source resolution was investigated as a suspect and **exonerated** — w185 vs
+w500 changes mean chroma by <0.001, so no resample-kernel tuning is warranted.
+
+---
+
 ## Phase roadmap
 
 | Phase | Scope |
@@ -1044,6 +1171,17 @@ do not implement them early.
       already its fallback) are both Client Components specifically because
       the `onError` handler is an event handler, and a Server Component
       cannot pass one to next/image across the boundary.
+- [x] **Step 2** — Dynamic per-title theming: accents resolved from each
+      title's own artwork (or its placeholder gradient in mock mode) and set
+      on the existing `data-title-theme` wrapper, so every `bg-accent` /
+      `text-accent` / `border-accent` re-tints with no component changes.
+      Server-side extraction (no flash of default colours), OKLCH clamping
+      with **measured** WCAG AA verification in both token roles, and an
+      invisible fall back to marquee gold. See `lib/theme/` above for the
+      full reasoning — especially why clamping alone is not trusted, and the
+      independent-percentile bug. Adds `sharp` as an explicit dependency: it
+      was already present as a transitive dep of Next, and relying on a
+      transitive we don't declare is a latent break.
 
 ---
 
