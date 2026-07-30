@@ -1,5 +1,6 @@
 import type {
   Episode,
+  ExternalRating,
   MediaType,
   PagedResult,
   Season,
@@ -76,6 +77,27 @@ export interface ContentProvider {
   getSimilar(id: string, mediaType: MediaType): Promise<TitleSummary[]>;
 
   getRecommendations(id: string, mediaType: MediaType): Promise<TitleSummary[]>;
+
+  /**
+   * Ratings from sources other than the provider's own community score:
+   * IMDb, Rotten Tomatoes, Metacritic.
+   *
+   * Takes our own `id`, not an IMDb id, so the caller never has to know one
+   * exists — resolving TMDB id -> IMDb id is `tmdbProvider`'s business and
+   * stays behind this interface, the same way TMDB image paths do.
+   *
+   * **Returns [] rather than throwing when a title simply has no external
+   * ratings.** That is an ordinary outcome (obscure titles, brand new
+   * releases, titles with no IMDb entry at all), not a failure — and it is
+   * also what an unconfigured OMDb key produces, so the zero-config guarantee
+   * still holds. Genuine failures (bad credential, quota exhausted, network)
+   * still reject with `ContentError`; callers rendering a page are expected
+   * to swallow those, because this is a SECONDARY source and must never take
+   * down a page that TMDB already answered for.
+   *
+   * Never returns a `"tmdb"` entry — see the note on `RatingSource`.
+   */
+  getExternalRatings(id: string, mediaType: MediaType): Promise<ExternalRating[]>;
 
   /**
    * `region` is an ISO 3166-1 country code (e.g. "US"). Defaults to "US" when

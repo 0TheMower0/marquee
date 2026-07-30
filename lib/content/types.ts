@@ -52,6 +52,32 @@ export interface CrewMember {
   profileUrl: string | null;
 }
 
+/**
+ * A rating from somewhere other than the content provider's own community
+ * score. `"tmdb"` is included in the union because the ratings row renders all
+ * sources uniformly — but note `getExternalRatings()` never RETURNS a tmdb
+ * entry: TMDB's score already lives on `Title.rating` and having two sources
+ * of truth for one number is how they drift apart. The UI composes them.
+ */
+export type RatingSource = "tmdb" | "imdb" | "rotten_tomatoes" | "metacritic";
+
+/**
+ * Each source's native scale, kept rather than normalized to a common one.
+ * "8.4/10", "85%" and "72/100" are how people actually recognise these
+ * scores — flattening them all to a percentage would make the row less
+ * informative, not more.
+ */
+export type RatingScale = "ten" | "percent" | "hundred";
+
+export interface ExternalRating {
+  source: RatingSource;
+  /** In the source's own scale: 8.4 for IMDb, 85 for RT, 72 for Metacritic. */
+  value: number;
+  scale: RatingScale;
+  /** Vote count where the source reports one. IMDb only, in practice. */
+  votes: number | null;
+}
+
 export type WatchProviderType = "stream" | "rent" | "buy";
 
 export interface WatchProvider {

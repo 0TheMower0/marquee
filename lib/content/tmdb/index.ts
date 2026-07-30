@@ -7,8 +7,10 @@ import type {
   TrendingOptions,
 } from "../provider";
 import type { MediaType, PagedResult, TitleSummary } from "../types";
+import { fetchOmdbRatings } from "../omdb/client";
 import { tmdbFetch } from "./client";
 import {
+  extractImdbId,
   toEpisodes,
   toSeasons,
   toTitle,
@@ -38,6 +40,27 @@ const DEFAULT_REGION = "US";
 
 function emptyPage<T>(): PagedResult<T> {
   return { items: [], page: 1, totalPages: 1, totalResults: 0 };
+}
+
+/**
+ * One request serves both `getTitle` and `getExternalRatings`.
+ *
+ * `credits` backs cast/crew; `external_ids` is the only way to get a TV show's
+ * IMDb id (see `extractImdbId`). TMDB bills `append_to_response` as a single
+ * call regardless of how many sub-resources it names, so adding external_ids
+ * costs nothing.
+ *
+ * Both callers MUST go through this helper. Next's data cache is keyed by the
+ * full URL, so if `getExternalRatings` built its own URL with a different
+ * `append_to_response` string it would miss `getTitle`'s cached entry and
+ * double our TMDB call volume for every detail page view. Sharing one function
+ * makes that impossible to get subtly wrong.
+ */
+function fetchTitleDetail(id: string, mediaType: MediaType): Promise<TmdbTitleDetail> {
+  return tmdbFetch<TmdbTitleDetail>(`/${mediaType}/${encodeURIComponent(id)}`, {
+    searchParams: { append_to_response: "credits,external_ids" },
+    revalidateSeconds: REVALIDATE.detail,
+  });
 }
 
 function toPagedSummaries(
@@ -108,15 +131,7 @@ export const tmdbProvider: ContentProvider = {
   },
 
   async getTitle(id, mediaType) {
-    const raw = await tmdbFetch<TmdbTitleDetail>(
-      `/${mediaType}/${encodeURIComponent(id)}`,
-      {
-        // One request instead of two — credits are the only extra data the
-        // detail page needs, and TMDB bills append_to_response as a single call.
-        searchParams: { append_to_response: "credits" },
-        revalidateSeconds: REVALIDATE.detail,
-      },
-    );
+    const raw = await fetchTitleDetail(id, mediaType);
 
     const title = toTitle(raw, mediaType);
     if (!title) {
@@ -167,6 +182,20 @@ export const tmdbProvider: ContentProvider = {
     // /recommendations can mix movies and shows, so each result's own
     // media_type wins; the requested type is only the fallback.
     return toTitleSummaries(raw.results, mediaType);
+  },
+
+  async getExternalRatings(id, mediaType) {
+    // Resolves through the SAME cached request `getTitle` already made for
+    // this page — see fetchTitleDetail. In practice this costs zero extra
+    // TMDB calls on a detail page view.
+    const raw = await fetchTitleDetail(id, mediaType);
+    const imdbId = extractImdbId(raw);
+
+    // No IMDb id means there is nothing to ask OMDb about. Common enough for
+    // obscure titles; the page carries on with TMDB's own score.
+    if (!imdbId) return [];
+
+    return fetchOmdbRatings(imdbId);
   },
 
   async getWatchProviders(id, mediaType, region = DEFAULT_REGION) {

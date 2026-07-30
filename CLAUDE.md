@@ -138,9 +138,36 @@ Three rules:
 `.env.local` is gitignored. `.env.example` is the committed template and must
 never contain a real credential.
 
+### The second credential: `OMDB_API_KEY` (Phase 4 Step 4)
+
+External ratings come from OMDb, which is a **second upstream credential** and
+gets the identical treatment: never `NEXT_PUBLIC_`, `lib/content/omdb/client.ts`
+begins with `import "server-only"`, and the browser reaches it only through
+`app/api/content/title/[mediaType]/[id]/ratings`.
+
+Two differences from TMDB worth knowing, both forced by OMDb rather than
+chosen:
+
+- **The key goes in a query parameter** (`?apikey=`). OMDb supports no header
+  form at all, so the "never as a query param" rule written for TMDB cannot
+  apply. The mitigation is that the URL is built server-side only and never
+  logged — `logSafeUrl()` exists so an error path can't accidentally print it.
+- **1,000 requests/day on the free tier.** This is the binding constraint on
+  the whole feature, not freshness. Responses are cached **7 days** at both
+  layers (`OMDB_REVALIDATE_SECONDS` in `omdb/client.ts` and
+  `CACHE_SECONDS.ratings` in `lib/api/respond.ts`). Ratings move in the third
+  decimal over a week for anything but a brand new release. Do not shorten
+  these without a reason.
+
+**A blank `OMDB_API_KEY` is a supported configuration, not a broken one.**
+`getExternalRatings()` returns `[]` and the detail page renders with TMDB's own
+score — the zero-config guarantee still holds with two credentials just as it
+did with one.
+
 ### Verified, not assumed
 
-The boundary was tested in Step 3, not taken on trust:
+The boundary was tested in Step 3 and re-tested for OMDb in Phase 4 Step 4,
+not taken on trust:
 
 - A client component importing `@/lib/content` **fails the build** with a full
   import trace. That is `server-only` working; if you ever hit this error, fix
@@ -148,6 +175,15 @@ The boundary was tested in Step 3, not taken on trust:
 - `.next/static` was grepped for `TMDB_READ_ACCESS_TOKEN`, `api.themoviedb.org`,
   `image.tmdb.org`, `Bearer `, `tmdbProvider`, `tmdbFetch` — all absent, with a
   positive control confirming the grep detects strings that *are* present.
+- For OMDb the same grep covered `OMDB_API_KEY`, `omdbapi.com`, `apikey`,
+  `fetchOmdbRatings`, `toExternalRatings` — all absent. Stronger still: a
+  **sentinel value** was placed in `OMDB_API_KEY`, the app rebuilt, and
+  `.next/static` grepped for that exact string — zero matches, proving the
+  *value* doesn't leak rather than just the variable name. It is not inlined
+  into `.next/server` either, because the key is read lazily at request time.
+- Importing `lib/content/omdb/client.ts` from a Client Component was tried
+  deliberately: the build failed with `You're importing a module that depends
+  on "server-only"` plus the full component trace.
 
 Worth being precise about one thing: **poster/backdrop URLs on
 `image.tmdb.org` do reach the browser at runtime**, inside the RSC payload, and
@@ -189,6 +225,7 @@ app/api/content/
   title/[mediaType]/[id]/similar/              getSimilar
   title/[mediaType]/[id]/recommendations/      getRecommendations
   title/[mediaType]/[id]/watch-providers/      getWatchProviders
+  title/[mediaType]/[id]/ratings/              getExternalRatings
   tv/[showId]/seasons/                         getSeasons
   tv/[showId]/seasons/[seasonNumber]/          getSeasonEpisodes
 
@@ -1224,6 +1261,56 @@ do not implement them early.
       the dedup is meant to catch one person holding two jobs in the SAME
       role (e.g. "Screenplay" + "Story"), not to prevent a person appearing
       in two different roles.
+- [x] **Step 4** — External ratings (IMDb / Rotten Tomatoes / Metacritic) via
+      OMDb, alongside TMDB's own score. `getExternalRatings(id, mediaType)` is
+      on the `ContentProvider` interface and implemented in both providers;
+      see the OMDb credential rules above. Key points:
+      - **OMDb is keyed by IMDb id, and getting one differs by media type.**
+        TMDB returns `imdb_id` at the top level of a MOVIE detail response but
+        a TV detail response has no such field — a show's IMDb id only exists
+        under `external_ids`, which needs `append_to_response=external_ids`.
+        Using only `imdb_id` would have silently produced zero ratings for
+        every TV show. `extractImdbId` checks `external_ids` first so both
+        media types resolve through one path.
+      - `getTitle` and `getExternalRatings` both go through
+        `fetchTitleDetail()` so they issue the **identical** TMDB URL and
+        share one data-cache entry. Next's data cache is keyed by full URL, so
+        a differing `append_to_response` string would silently double our TMDB
+        call volume per detail page. Don't inline either call site.
+      - **OMDb reports failure in the BODY** (`Response: "False"`), sometimes
+        with HTTP 200, and returns **401 for both an invalid key and an
+        exhausted quota** — so status code alone cannot tell those apart. The
+        `Error` string is the only signal distinguishing `rate_limited` from
+        `unauthorized`. Probed against the live API; see `kindFromOmdbError`.
+      - "OMDb has no record of this title" returns `[]` rather than throwing.
+        That's an ordinary outcome, not a failure.
+      - **OMDb carries no Metacritic score for TV at all, and only sporadic
+        Rotten Tomatoes.** Measured against the live API with a real key:
+        `Metascore` was `"N/A"` for 6/6 series tested (Breaking Bad, Game of
+        Thrones, Chernobyl, Stranger Things, The Simpsons, Rick and Morty),
+        and only Breaking Bad had an RT entry. All 4 movies tested returned
+        all three sources. So a **movie shows four rating chips and a TV show
+        usually shows two** — that is the data source's limit, not a bug, and
+        it is exactly why the row degrades per source rather than assuming a
+        fixed set. Do not "fix" this by fabricating TV scores; if full TV
+        coverage is ever wanted it needs a different upstream.
+      - `lib/content/omdb/normalize.ts` is deliberately **not** `server-only`
+        (same reasoning as `http/wire.ts`: pure parsing, no credential) so it
+        can be unit-tested — 16 tests over realistic OMDb payloads covering
+        `"N/A"` strings, comma-grouped vote counts, out-of-range values, and
+        failure-reported-as-200. This is the layer mock data cannot exercise.
+      - The row **degrades per source by construction**: it maps over the
+        ratings that exist, so a missing source renders nothing and no
+        combination can produce an empty box. With every external source
+        missing it still shows TMDB alone. Mock mode deliberately ships
+        incomplete data for three titles (`MOCK_RATING_OMISSIONS`) so those
+        paths are reachable offline instead of only against a live API.
+      - Streamed in its own `<Suspense>` boundary — "never block the page on a
+        secondary source" means OMDb's latency must not sit in the page's TTFB.
+      - Source marks use each brand's colour, NOT the Step 2 page accent: the
+        whole value of five sources is telling them apart. Metacritic uses its
+        real green/yellow/red score bands, which is both authentic and avoids
+        its brand yellow colliding with IMDb's near-identical one.
 
 ---
 

@@ -35,6 +35,10 @@ export const CACHE_SECONDS = {
   detail: 86_400,
   related: 86_400,
   watchProviders: 43_200,
+  /** 7 days, matching OMDB_REVALIDATE_SECONDS. OMDb's free tier is only
+   *  1,000 requests/day, so this CDN layer is a real part of staying inside
+   *  the quota rather than a nicety — see lib/content/omdb/client.ts. */
+  ratings: 604_800,
 } as const;
 
 export function jsonOk<T>(data: T, sMaxAge: number): Response {

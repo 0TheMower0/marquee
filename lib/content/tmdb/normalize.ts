@@ -95,6 +95,12 @@ export interface TmdbTitleDetail extends TmdbListItem {
   seasons?: TmdbSeasonSummary[];
   credits?: { cast?: TmdbCastEntry[]; crew?: TmdbCrewEntry[] };
   created_by?: TmdbCreatedBy[]; // tv only
+  /** MOVIES ONLY. TMDB puts `imdb_id` at the top level of a movie detail
+   *  response but NOT a TV one — see `extractImdbId`. */
+  imdb_id?: string | null;
+  /** Present only with `append_to_response=external_ids`. The only way to get
+   *  a TV show's IMDb id. */
+  external_ids?: { imdb_id?: string | null };
 }
 
 interface TmdbEpisode {
@@ -449,6 +455,29 @@ function toCrew(raw: TmdbTitleDetail, mediaType: MediaType): CrewMember[] {
   ).slice(0, WRITING_CREW_CAP);
 
   return [...directors, ...writers];
+}
+
+/**
+ * The IMDb id, which is what OMDb is keyed by (`lib/content/omdb/`).
+ *
+ * Movies and TV differ here and it is easy to miss, because a movie appears to
+ * work with no extra request: TMDB returns `imdb_id` at the TOP LEVEL of a
+ * movie detail response, but a TV detail response has no such field at all —
+ * a show's IMDb id only exists under `external_ids`, which requires
+ * `append_to_response=external_ids`. Verified against the live API:
+ *
+ *   /movie/414906                          -> imdb_id: "tt1877830"
+ *   /tv/87108                              -> imdb_id: undefined
+ *   /tv/87108?append_to_response=external_ids -> external_ids.imdb_id: "tt7366338"
+ *
+ * `external_ids` is checked first so the two media types resolve through one
+ * code path. Returns null when absent — plenty of obscure titles genuinely
+ * have no IMDb entry, and the caller degrades to TMDB's own score.
+ */
+export function extractImdbId(raw: TmdbTitleDetail): string | null {
+  const fromExternal = nullableString(raw.external_ids?.imdb_id);
+  if (fromExternal) return fromExternal;
+  return nullableString(raw.imdb_id);
 }
 
 /**

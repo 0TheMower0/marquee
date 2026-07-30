@@ -7,6 +7,7 @@ import type {
 import { derivePlaceholderArt } from "../shared/placeholder";
 import type {
   Episode,
+  ExternalRating,
   MediaType,
   PagedResult,
   Season,
@@ -239,6 +240,94 @@ function synthesizeEpisodes(entry: CatalogEntry, season: Season): Episode[] {
   });
 }
 
+/* ---------------------------------------------------------------------------
+ * External ratings
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Titles that deliberately return INCOMPLETE external ratings, so mock mode
+ * can actually exercise the per-source degradation the real API forces on us.
+ * Without these, every mock title would return all three sources and the
+ * "one source missing" layout would only ever be reachable in tmdb mode —
+ * exactly the blind spot that has bitten the last two steps.
+ *
+ * These are plausible as well as useful: Rotten Tomatoes genuinely has no
+ * score for a lot of pre-1995 television, and Metacritic doesn't cover every
+ * currently-airing show.
+ */
+const MOCK_RATING_OMISSIONS: Record<string, ReadonlyArray<ExternalRating["source"]>> = {
+  "twin-peaks": ["rotten_tomatoes"],
+  "the-bear": ["metacritic"],
+  // No external ratings at all — the "OMDb has never heard of this" case,
+  // where the row must fall back to showing only TMDB's own score.
+  "do-the-right-thing": ["imdb", "rotten_tomatoes", "metacritic"],
+};
+
+/** FNV-1a, same approach as shared/placeholder.ts: deterministic, so a title's
+ *  mock ratings never change between renders or reloads. */
+function hashOf(input: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Deterministic offset in [-spread, +spread], derived from the title id. */
+function jitter(id: string, salt: string, spread: number): number {
+  const unit = (hashOf(`${id}:${salt}`) % 1000) / 1000; // 0..1
+  return (unit * 2 - 1) * spread;
+}
+
+/**
+ * Plausible fixed values derived from the catalog's own TMDB rating, rather
+ * than hand-authored per title. Deriving keeps them COHERENT — a 9.3 film
+ * can't end up with a 41% Rotten Tomatoes score, which is what makes a mock
+ * dataset look obviously fake — while staying deterministic and requiring no
+ * maintenance as the catalog grows.
+ */
+function mockRatingsFor(entry: CatalogEntry): ExternalRating[] {
+  const omitted = new Set(MOCK_RATING_OMISSIONS[entry.id] ?? []);
+  const base = entry.rating ?? 7;
+  const ratings: ExternalRating[] = [];
+
+  if (!omitted.has("imdb")) {
+    const value = Math.min(10, Math.max(0, base + jitter(entry.id, "imdb", 0.4)));
+    ratings.push({
+      source: "imdb",
+      value: Math.round(value * 10) / 10,
+      scale: "ten",
+      votes: 25_000 + (hashOf(`${entry.id}:votes`) % 1_800_000),
+    });
+  }
+
+  if (!omitted.has("rotten_tomatoes")) {
+    // RT skews higher than a 10-point average for well-regarded titles, and
+    // its distribution is much wider — a deliberately different curve so the
+    // three numbers don't look like the same value printed three ways.
+    const value = Math.min(100, Math.max(0, base * 10 + jitter(entry.id, "rt", 12)));
+    ratings.push({
+      source: "rotten_tomatoes",
+      value: Math.round(value),
+      scale: "percent",
+      votes: null,
+    });
+  }
+
+  if (!omitted.has("metacritic")) {
+    const value = Math.min(100, Math.max(0, base * 9.2 + jitter(entry.id, "mc", 8)));
+    ratings.push({
+      source: "metacritic",
+      value: Math.round(value),
+      scale: "hundred",
+      votes: null,
+    });
+  }
+
+  return ratings;
+}
+
 export const mockProvider: ContentProvider = {
   async searchTitles(query, options: SearchTitlesOptions = {}) {
     await simulateLatency(options.signal);
@@ -336,6 +425,11 @@ export const mockProvider: ContentProvider = {
       .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
       .slice(0, 6)
       .map((candidate) => toSummary(hydrate(candidate)));
+  },
+
+  async getExternalRatings(id, mediaType) {
+    await simulateLatency();
+    return mockRatingsFor(requireEntry(id, mediaType));
   },
 
   async getWatchProviders(id, mediaType) {

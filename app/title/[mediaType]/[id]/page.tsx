@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 
 import { ContentErrorState } from "@/components/content/content-error-state";
 import { BackdropImage } from "@/components/title/backdrop-image";
 import { CastCrewSection } from "@/components/title/cast-crew-section";
 import { PosterImage } from "@/components/title/poster-image";
+import { RatingsRow, RatingsRowSkeleton } from "@/components/title/ratings-row";
 import { WatchProvidersSection } from "@/components/title/watch-providers-section";
 import { SeasonList } from "@/components/tracking/season-list";
 import { ShowProgressBadge } from "@/components/tracking/show-progress-badge";
@@ -22,6 +24,7 @@ import {
 import { getContentProvider } from "@/lib/content";
 import { ContentError, type ContentErrorKind } from "@/lib/content/errors";
 import type {
+  ExternalRating,
   MediaType,
   Season,
   Title,
@@ -104,6 +107,42 @@ export async function generateMetadata({
   } catch {
     return { title: "Title" };
   }
+}
+
+/**
+ * Streamed separately from the rest of the page, inside its own Suspense
+ * boundary — this is what "never block the page on a secondary data source"
+ * actually means in a Server Component.
+ *
+ * OMDb is a second upstream hop layered on top of TMDB's, so awaiting it in
+ * the page body would add its latency to the time-to-first-byte of everything
+ * — hero, overview, tracking controls — for a row of numbers. With a boundary
+ * the page paints immediately and the ratings land when they land.
+ *
+ * The catch swallows genuine ContentErrors (bad OMDb key, quota exhausted,
+ * network) on purpose: a secondary source failing must never degrade the page
+ * beyond losing the thing it supplies. `RatingsRow` still renders TMDB's own
+ * score from data we already have. Note only the `await` sits inside the
+ * `try` — JSX built inside a try block would escape the catch entirely (see
+ * CLAUDE.md, "Error handling is two layers").
+ */
+async function RatingsSection({
+  id,
+  mediaType,
+  tmdbRating,
+}: {
+  id: string;
+  mediaType: MediaType;
+  tmdbRating: number | null;
+}) {
+  let external: ExternalRating[] = [];
+  try {
+    external = await getContentProvider().getExternalRatings(id, mediaType);
+  } catch {
+    // Intentionally swallowed — see above.
+  }
+
+  return <RatingsRow tmdbRating={tmdbRating} external={external} />;
 }
 
 export default async function TitleDetailPage({
@@ -286,6 +325,13 @@ export default async function TitleDetailPage({
             </ul>
           </section>
         )}
+
+        {/* Streams in independently — see RatingsSection. */}
+        <div className="mt-8">
+          <Suspense fallback={<RatingsRowSkeleton />}>
+            <RatingsSection id={id} mediaType={mediaType} tmdbRating={title.rating} />
+          </Suspense>
+        </div>
 
         <section aria-label="Track this title" className="mt-8">
           <TrackingActions title={title} />

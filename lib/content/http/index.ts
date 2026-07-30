@@ -18,6 +18,7 @@ import type {
 } from "../provider";
 import type {
   Episode,
+  ExternalRating,
   MediaType,
   PagedResult,
   Season,
@@ -187,6 +188,12 @@ export const httpProvider: ContentProvider = {
   async getRecommendations(id: string, mediaType: MediaType) {
     return apiFetch<TitleSummary[]>(
       `/title/${mediaType}/${encodeURIComponent(id)}/recommendations`,
+    );
+  },
+
+  async getExternalRatings(id: string, mediaType: MediaType) {
+    return apiFetch<ExternalRating[]>(
+      `/title/${mediaType}/${encodeURIComponent(id)}/ratings`,
     );
   },
 
