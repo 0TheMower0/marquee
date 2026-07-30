@@ -138,6 +138,24 @@ export function EyeIcon(props: IconProps) {
   );
 }
 
+export function ChevronDownIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m6 9 6 6 6-6" />
+    </Icon>
+  );
+}
+
+/** "Mark watched up to here" — the binge-catchup action on an episode row. */
+export function SkipToIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m6 6 6 5 6-5" />
+      <path d="m6 13 6 5 6-5" />
+    </Icon>
+  );
+}
+
 export function SpinnerIcon(props: IconProps) {
   return (
     <Icon {...props}>

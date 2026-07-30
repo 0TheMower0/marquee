@@ -834,6 +834,97 @@ result row.
 
 ---
 
+## Season/episode UI — `components/tracking/season-list.tsx`
+
+The title detail page for a TV title is wrapped in `Tabs` (Overview /
+Seasons) instead of the flat layout movies still use — `TrackingActions`
+sits above the tabs, always visible regardless of which one is active.
+Movies are unaffected: `mediaType === "tv"` gates the whole tabbed branch.
+
+```
+app/title/[mediaType]/[id]/page.tsx
+  fetches Title AND, for TV, Season[] via getSeasons() — both server-side.
+  Season[] carries only episode COUNTS, never the episodes themselves.
+
+components/tracking/
+  show-progress-badge.tsx  hero badge: "24 / 62 episodes · 38%"
+  season-list.tsx          the Seasons tab: show progress + season accordion
+  progress-bar.tsx         shared by both of the above
+```
+
+### Only one season's episodes are ever mounted
+
+Every season's *collapsed* row — name, progress bar, one button — is cheap
+and computed from `Season.episodeCount` alone, already in hand from the
+server-side `getSeasons()` call. Nothing about a collapsed row requires a
+fetch. Expanding a season lazily fetches that ONE season's episodes via
+`httpProvider.getSeasonEpisodes()` (the client-data-seam route from Phase 2
+Step 1) and caches them; expanding a different season collapses the first.
+**At most one season's episode list is in the DOM at any time**, regardless
+of whether the show has 3 seasons or 20 — verified against Grey's Anatomy
+(20 seasons): expanding season 12 after season 5 left total page height
+essentially unchanged rather than additive, and only ~21 `<li>` elements
+existed (one season's worth), not two seasons' worth combined.
+
+This is *the* answer to "must not become an unusable wall" — it is a
+consequence of the fetch strategy, not a separate collapsing trick bolted on
+afterward.
+
+### Unaired episodes — enforced at every level that can mark one watched
+
+`isFutureAirDate()` (`lib/utils/dates.ts`) compares an episode's `airDate`
+against today as a **plain string comparison** on the `"YYYY-MM-DD"` form —
+deliberately not `Date` arithmetic, which would need timezone reasoning for a
+value that's a calendar date, not an instant. `null` counts as NOT unaired:
+most of the SEASON_SHAPES-tier shows (Breaking Bad, The Office, ...) have no
+per-episode dates at all, only a real season premiere date, and treating
+"unknown" the same as "hasn't aired" would make most of the catalog's TV
+shows unmarkable.
+
+An unaired episode is unmarkable through **every path that could mark it**,
+not just the obvious one:
+
+- The per-episode toggle and "mark up to here" — disabled outright.
+- **"Mark season watched"** — this one is easy to get wrong, and did get it
+  wrong once during testing: the pure `markSeason` in `progress.ts` has no
+  concept of air dates at all (it only ever sees `SeasonEpisodeCounts` —
+  numbers, never `Episode` objects), so it will happily mark a whole season
+  including an episode that hasn't aired yet. The fix lives in
+  `season-list.tsx`, the one place that actually holds real `Episode[]`
+  data: clicking "mark season watched" ensures that season's episodes are
+  loaded (fetching if the season was never expanded), finds the last AIRED
+  episode, and marks only up to there.
+
+**That fix introduced its own bug, caught by re-testing rather than assumed
+fixed**: the obvious tool for "mark up to episode N" is
+`markWatchedUpTo`/`markWatchedUpToEpisode` — but that function deliberately
+sweeps every PRIOR season fully too (the correct behavior for the per-episode
+binge button, "I binged to S4E2" implying you saw all of S1-3). Reusing it
+for "mark season watched" would make marking a partially-aired season 4 also
+silently mark all of seasons 1-3, which nothing in that button's label
+promises. The real fix is `markSeasonUpTo` in `progress.ts` — same shape,
+but scoped to ONE season, no sweep. `markWatchedUpTo` and `markSeasonUpTo`
+look almost identical and exist for genuinely different callers; do not
+collapse them into one "helpful" function.
+
+### Progress percentages count scheduled episodes, including unaired ones
+
+`episodeCount` on a currently-airing season includes episodes that haven't
+aired yet (this matches how TMDB's own `number_of_episodes` works). A
+consequence, accepted deliberately rather than special-cased: a currently
+airing season/show can never show 100% — including one where every AIRED
+episode is watched — until the unaired episode(s) actually air and get
+watched too. Verified: The Bear's season 4, with episodes 1-3 watched and
+episode 4 unaired, reports 75%, not 100%, and "Mark season watched" leaves
+it at 75% rather than lying. This was a deliberate choice not to make, not
+an oversight — excluding scheduled-but-unaired episodes from the denominator
+would need threading air-date awareness into the pure progress-math layer
+(`lib/tracking/progress.ts`), which currently knows only episode counts and
+stays deliberately ignorant of dates. Revisit if it proves confusing in
+practice.
+
+---
+
 ## Phase roadmap
 
 | Phase | Scope |
@@ -886,8 +977,10 @@ do not implement them early.
       shapes for 6 more (see `mock/episodes.ts`)
 - [x] **Step 1** — Episode-level data model: range encoding, v1 -> v2
       migration, operations + derived queries (`lib/tracking/progress.ts`)
-- [ ] **Step 2** — The "Up Next" engine, over `nextUnwatchedEpisode`
-- [ ] **Step 3** — Episode-list UI on the title detail page
+- [x] **Step 2** — Season/episode UI on the title detail page: Seasons tab,
+      per-season accordion, episode watched toggles, "mark up to here",
+      unaired-episode handling (`components/tracking/season-list.tsx`)
+- [ ] **Step 3** — The "Up Next" engine, over `nextUnwatchedEpisode`
 
 ---
 

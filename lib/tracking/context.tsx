@@ -8,6 +8,7 @@ import {
   deriveStatus,
   markEpisode,
   markSeason,
+  markSeasonUpTo,
   markWatchedUpTo,
   reconcileCoarseWatched,
   unmarkEpisode,
@@ -80,8 +81,23 @@ interface TrackingContextValue {
     seasons: SeasonEpisodeCounts,
     seasonNumber: number,
   ) => Promise<void>;
-  /** "I binged to here" — everything up to and including this episode. */
+  /** "I binged to here" — everything up to and including this episode,
+   *  INCLUDING every prior season in full. See markSeasonUpTo below for the
+   *  single-season variant. */
   markWatchedUpToEpisode: (
+    summary: TitleSummary,
+    seasons: SeasonEpisodeCounts,
+    seasonNumber: number,
+    episodeNumber: number,
+  ) => Promise<void>;
+  /**
+   * Mark 1..episodeNumber within ONE season only — no other season is
+   * touched. Exists for "mark season watched" degrading to "everything
+   * aired so far" on a currently-airing season; using the cross-season
+   * `markWatchedUpToEpisode` for that would incorrectly sweep every prior
+   * season too.
+   */
+  markSeasonWatchedUpTo: (
     summary: TitleSummary,
     seasons: SeasonEpisodeCounts,
     seasonNumber: number,
@@ -256,6 +272,10 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
     markWatchedUpToEpisode: (summary, seasons, seasonNumber, episodeNumber) =>
       applyEpisodeMutation(summary, seasons, (watched) =>
         markWatchedUpTo(watched, seasons, seasonNumber, episodeNumber),
+      ),
+    markSeasonWatchedUpTo: (summary, seasons, seasonNumber, episodeNumber) =>
+      applyEpisodeMutation(summary, seasons, (watched) =>
+        markSeasonUpTo(watched, seasonNumber, episodeNumber),
       ),
   };
 

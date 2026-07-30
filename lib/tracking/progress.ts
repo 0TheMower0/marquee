@@ -40,6 +40,14 @@ export interface EpisodeRef {
   episodeNumber: number;
 }
 
+export interface SeasonProgress {
+  watchedCount: number;
+  totalCount: number;
+  /** 0–100, same 100-only-when-genuinely-complete rule as TitleProgress. */
+  percentComplete: number;
+  isComplete: boolean;
+}
+
 export interface TitleProgress {
   /** Episodes watched in numbered seasons, clamped to what actually exists. */
   watchedCount: number;
@@ -90,13 +98,15 @@ function withSeason(
 }
 
 /**
- * Discards anything beyond a season's real length.
+ * Discards anything beyond a season's real length. Exported — the season/
+ * episode UI (Phase 3 Step 2) uses this same clamp for a single season's
+ * progress via `getSeasonProgress`, below.
  *
  * Stored ranges can outlive the data that justified them: a season trimmed
  * from 13 episodes to 10 by the provider would otherwise let a `[1,13]` range
  * count 13 watched out of 10 and report 130% complete.
  */
-function clampRanges(
+export function clampRanges(
   ranges: readonly EpisodeRange[],
   episodeCount: number,
 ): EpisodeRange[] {
@@ -241,6 +251,30 @@ export function unmarkSeason(
 }
 
 /**
+ * Mark episodes 1..episodeNumber within a SINGLE season — no other season is
+ * touched. Distinct from `markWatchedUpTo` below, which deliberately sweeps
+ * every PRIOR season too for the cross-show binge case.
+ *
+ * The one caller this exists for: "mark season watched" degrading to "mark
+ * everything that's aired so far in THIS season" when the season is still
+ * airing. Sweeping prior seasons in that situation would be a real bug —
+ * marking season 4 (partially, because it's airing) must never also affect
+ * seasons 1-3 as a side effect of a button that only mentions season 4.
+ */
+export function markSeasonUpTo(
+  watched: WatchedEpisodes,
+  seasonNumber: number,
+  episodeNumber: number,
+): WatchedEpisodes {
+  if (!Number.isInteger(episodeNumber) || episodeNumber < 1) return watched;
+  return withSeason(
+    watched,
+    seasonNumber,
+    addRange(watched[seasonNumber] ?? [], [1, episodeNumber]),
+  );
+}
+
+/**
  * "I binged to here" — mark everything up to and including S{season}E{episode}.
  *
  * Two decisions worth knowing about:
@@ -330,6 +364,42 @@ export function nextUnwatchedEpisode(
     }
   }
   return null;
+}
+
+/**
+ * Progress for a single season — including season 0. Unlike `TitleProgress`,
+ * this makes NO special case for specials: pass season 0's own episodeCount
+ * and it reports normally. Exclusion of specials from the *show-level*
+ * aggregate happens in `getTitleProgress`/`totalEpisodeCount`, not here — a
+ * specials row still deserves its own honest "1 of 2 watched".
+ *
+ * Deliberately takes `episodeCount` directly rather than the full season
+ * list: this is what lets the season/episode UI render every season's
+ * collapsed progress bar from the season list alone, with no per-season
+ * episode fetch — only expanding a season to see individual titles/dates
+ * needs one.
+ */
+export function getSeasonProgress(
+  watched: WatchedEpisodes,
+  seasonNumber: number,
+  episodeCount: number,
+): SeasonProgress {
+  const watchedCount = countRanges(
+    clampRanges(watched[seasonNumber] ?? [], episodeCount),
+  );
+  const isComplete = episodeCount > 0 && watchedCount >= episodeCount;
+
+  return {
+    watchedCount,
+    totalCount: episodeCount,
+    percentComplete:
+      episodeCount === 0
+        ? 0
+        : isComplete
+          ? 100
+          : Math.min(99, Math.floor((watchedCount / episodeCount) * 100)),
+    isComplete,
+  };
 }
 
 /**

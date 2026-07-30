@@ -2,12 +2,27 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { ContentErrorState } from "@/components/content/content-error-state";
+import { SeasonList } from "@/components/tracking/season-list";
+import { ShowProgressBadge } from "@/components/tracking/show-progress-badge";
 import { TrackingActions } from "@/components/tracking/tracking-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { FilmIcon } from "@/components/ui/icons";
+import {
+  Tabs,
+  TabsList,
+  TabsPanel,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import { getContentProvider } from "@/lib/content";
-import { ContentError } from "@/lib/content/errors";
-import type { MediaType, Title, TitleStatus } from "@/lib/content/types";
+import { ContentError, type ContentErrorKind } from "@/lib/content/errors";
+import type {
+  MediaType,
+  Season,
+  Title,
+  TitleStatus,
+} from "@/lib/content/types";
 import { initialsFor } from "@/lib/utils/initials";
 
 /**
@@ -101,6 +116,25 @@ export default async function TitleDetailPage({
       return <ContentErrorState kind={error.kind} className="min-h-[70vh]" />;
     }
     throw error;
+  }
+
+  // Fetched here, once, server-side — NOT the individual episode lists,
+  // which would mean a provider call per season on a page that might have
+  // 20 of them. Season/episode-count data is enough for every progress
+  // number on this page; only expanding a season in <SeasonList> fetches
+  // that one season's actual episodes, client-side, on demand.
+  let seasons: Season[] | null = null;
+  let seasonsErrorKind: ContentErrorKind | null = null;
+  if (mediaType === "tv") {
+    try {
+      seasons = await getContentProvider().getSeasons(id);
+    } catch (error) {
+      if (error instanceof ContentError) {
+        seasonsErrorKind = error.kind;
+      } else {
+        throw error;
+      }
+    }
   }
 
   const { placeholder } = title;
@@ -207,6 +241,9 @@ export default async function TitleDetailPage({
               {title.status && (
                 <Badge variant="outline">{STATUS_LABEL[title.status]}</Badge>
               )}
+              {seasons && seasons.length > 0 && (
+                <ShowProgressBadge title={title} seasons={seasons} />
+              )}
             </div>
           </div>
         </div>
@@ -228,30 +265,71 @@ export default async function TitleDetailPage({
           </section>
         )}
 
-        <section aria-labelledby="overview-heading" className="mt-8">
-          <h2
-            id="overview-heading"
-            className="font-display text-display-md text-fg uppercase"
-          >
-            Overview
-          </h2>
-          <p
-            className={
-              title.overview
-                ? "text-body-lg text-fg-muted mt-2 max-w-prose"
-                : "text-body text-fg-subtle mt-2 max-w-prose italic"
-            }
-          >
-            {title.overview || "No overview available for this title."}
-          </p>
-        </section>
-
         <section aria-label="Track this title" className="mt-8">
           <TrackingActions title={title} />
         </section>
 
-        {/* Cast, seasons, episodes and watch providers arrive in Phase 4.
-            Nothing is stubbed in here for them on purpose. */}
+        {mediaType === "tv" ? (
+          // Tabbed for TV: Overview alongside a Seasons tab, which is where
+          // all the episode-level UI lives. TabsPanel already exposes each
+          // panel's accessible name via its TabsTrigger, so neither panel
+          // repeats a redundant heading the way the movie layout below does
+          // (which has no tab to label it).
+          <Tabs defaultValue="overview" className="mt-8">
+            <TabsList label="Title sections">
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="seasons">Seasons</TabsTrigger>
+            </TabsList>
+
+            <TabsPanel value="overview">
+              <p
+                className={
+                  title.overview
+                    ? "text-body-lg text-fg-muted max-w-prose"
+                    : "text-body text-fg-subtle max-w-prose italic"
+                }
+              >
+                {title.overview || "No overview available for this title."}
+              </p>
+            </TabsPanel>
+
+            <TabsPanel value="seasons">
+              {seasonsErrorKind ? (
+                <ContentErrorState kind={seasonsErrorKind} className="py-10" />
+              ) : seasons && seasons.length > 0 ? (
+                <SeasonList title={title} seasons={seasons} />
+              ) : (
+                <EmptyState
+                  icon={<FilmIcon />}
+                  title="No season data"
+                  body="Season and episode information isn't available for this title."
+                  className="py-10"
+                />
+              )}
+            </TabsPanel>
+          </Tabs>
+        ) : (
+          <section aria-labelledby="overview-heading" className="mt-8">
+            <h2
+              id="overview-heading"
+              className="font-display text-display-md text-fg uppercase"
+            >
+              Overview
+            </h2>
+            <p
+              className={
+                title.overview
+                  ? "text-body-lg text-fg-muted mt-2 max-w-prose"
+                  : "text-body text-fg-subtle mt-2 max-w-prose italic"
+              }
+            >
+              {title.overview || "No overview available for this title."}
+            </p>
+          </section>
+        )}
+
+        {/* Cast and watch providers arrive in Phase 4. Nothing is stubbed in
+            here for them on purpose. */}
         <div className="mt-10">
           <Button href="/" variant="ghost">
             ← Back to trending

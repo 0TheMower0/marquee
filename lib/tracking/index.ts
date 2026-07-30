@@ -5,11 +5,14 @@
  */
 export { TrackingProvider, useTracking } from "./context";
 export {
+  clampRanges,
   deriveStatus,
+  getSeasonProgress,
   getTitleProgress,
   isEpisodeWatched,
   markEpisode,
   markSeason,
+  markSeasonUpTo,
   markWatchedUpTo,
   nextUnwatchedEpisode,
   reconcileCoarseWatched,
@@ -18,7 +21,7 @@ export {
   unmarkSeason,
   watchedEpisodeCount,
 } from "./progress";
-export type { EpisodeRef, TitleProgress } from "./progress";
+export type { EpisodeRef, SeasonProgress, TitleProgress } from "./progress";
 export {
   addRange,
   countRanges,
