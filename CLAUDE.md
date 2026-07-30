@@ -985,8 +985,27 @@ do not implement them early.
       weighted ranking (`lib/tracking/upnext.ts`, unit-tested — this
       introduced Vitest to the repo) surfaced as a Home rail
       (`components/tracking/up-next-rail.tsx`)
+- **Step 4** — Up Next surfaced beyond the Home rail. Reuses the Step 3
+      engine (`selectUpNextCandidates` / `buildUpNextItem` / `rankUpNext`) —
+      the fetch-orchestration logic that used to live inline in
+      `UpNextRail` was pulled out into `components/tracking/use-up-next-items.ts`
+      (a hook) and `up-next-card.tsx` (the card, now `w-full` so it fits a
+      grid cell as well as the rail's fixed-width scroll slot) specifically
+      so this step's two consumers didn't duplicate it:
+      - [x] Empty state for Up Next — routes to Search (Home; Trending is
+            already one scroll down on that page) or both Search and
+            Trending (Library, where neither is otherwise reachable).
+            Replaces the bare `return null` from Step 3.
+      - [x] "Continue Watching" section in My Library
+            (`components/tracking/continue-watching-section.tsx`) — the
+            fuller, untruncated, responsive-grid view of the same ranked
+            list, replacing what used to be a plain "Watching" `TitleGrid`
+      - [ ] Progress bars on `TicketCard` for in-progress (`"watching"`)
+            shows — deferred; the one item here with a real design decision
+            in it (`TicketCard` renders in Server Component contexts today
+            and has no tracking-aware data path yet)
 
-**Phase 3 is complete.**
+---
 
 ---
 
