@@ -3,6 +3,15 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 import type { MediaType, TitleSummary } from "@/lib/content/types";
+// Deep imports, not the `@/lib/watchlog` barrel's siblings: this module is
+// what the log is wired INTO, so nothing here may import back through
+// lib/tracking's own barrel. See the note in lib/watchlog/diff.ts.
+import {
+  appendWatchEvents,
+  logEpisodeMutation,
+  movieEvent,
+  titleEvent,
+} from "@/lib/watchlog";
 
 import {
   deriveStatus,
@@ -168,6 +177,20 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
       setEntries(previous);
       throw error;
     }
+
+    // Phase 5 Step 1. AFTER the tracking write succeeds — never log something
+    // that didn't persist. Only on the transition INTO "watched": re-clicking
+    // an already-watched title must not append a duplicate event.
+    //
+    // A TV title marked watched here gets ONE title-level event, not per
+    // episode: this path sets `status` with empty ranges and genuinely does
+    // not know which episodes exist (that is what `reconcileCoarseWatched`
+    // resolves later, at the point of use, where season data is in hand).
+    if (status === "watched" && existing?.status !== "watched") {
+      void appendWatchEvents([
+        summary.mediaType === "movie" ? movieEvent(summary.id) : titleEvent(summary.id),
+      ]);
+    }
   }
 
   /**
@@ -182,6 +205,15 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
     summary: TitleSummary,
     seasons: SeasonEpisodeCounts,
     mutate: (watched: WatchedEpisodes) => WatchedEpisodes,
+    /**
+     * Whether this came from a bulk action ("mark season watched", "binge to
+     * here") rather than one deliberate episode mark. Passed explicitly, not
+     * inferred from how many episodes the diff produced — inference would be
+     * correct today but would silently misclassify a future operation, and
+     * this flag can never be recovered once written wrong. See the note on
+     * `WatchEvent.b`.
+     */
+    options: { bulk: boolean },
   ) {
     if (summary.mediaType !== "tv") {
       // A programming error, not a user-facing condition: movies have no
@@ -227,6 +259,15 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
       setEntries(previous);
       throw error;
     }
+
+    // Phase 5 Step 1. One call covers every episode operation, because this
+    // function is the funnel they all pass through and it holds both sides of
+    // the change — `logEpisodeMutation` diffs them. Un-marks yield an empty
+    // diff and log nothing. Fire-and-forget: it never throws, and history is
+    // strictly secondary to the progress write above.
+    void logEpisodeMutation(summary.mediaType, summary.id, currentWatched, nextWatched, {
+      bulk: options.bulk,
+    });
   }
 
   async function remove(id: string, mediaType: MediaType) {
@@ -253,29 +294,52 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
     setStatus,
     remove,
 
+    // `bulk` below is about how the user EXPRESSED the action, not how many
+    // episodes it happened to touch. Ticking one episode is a single mark
+    // even if it completes a season; "mark season watched" is bulk even on a
+    // season with one episode left. Un-marks pass `false` and are irrelevant
+    // anyway — they produce an empty diff and log nothing.
     markEpisodeWatched: (summary, seasons, seasonNumber, episodeNumber) =>
-      applyEpisodeMutation(summary, seasons, (watched) =>
-        markEpisode(watched, seasonNumber, episodeNumber),
+      applyEpisodeMutation(
+        summary,
+        seasons,
+        (watched) => markEpisode(watched, seasonNumber, episodeNumber),
+        { bulk: false },
       ),
     unmarkEpisodeWatched: (summary, seasons, seasonNumber, episodeNumber) =>
-      applyEpisodeMutation(summary, seasons, (watched) =>
-        unmarkEpisode(watched, seasonNumber, episodeNumber),
+      applyEpisodeMutation(
+        summary,
+        seasons,
+        (watched) => unmarkEpisode(watched, seasonNumber, episodeNumber),
+        { bulk: false },
       ),
     markSeasonWatched: (summary, seasons, seasonNumber) =>
-      applyEpisodeMutation(summary, seasons, (watched) =>
-        markSeason(watched, seasons, seasonNumber),
+      applyEpisodeMutation(
+        summary,
+        seasons,
+        (watched) => markSeason(watched, seasons, seasonNumber),
+        { bulk: true },
       ),
     unmarkSeasonWatched: (summary, seasons, seasonNumber) =>
-      applyEpisodeMutation(summary, seasons, (watched) =>
-        unmarkSeason(watched, seasonNumber),
+      applyEpisodeMutation(
+        summary,
+        seasons,
+        (watched) => unmarkSeason(watched, seasonNumber),
+        { bulk: false },
       ),
     markWatchedUpToEpisode: (summary, seasons, seasonNumber, episodeNumber) =>
-      applyEpisodeMutation(summary, seasons, (watched) =>
-        markWatchedUpTo(watched, seasons, seasonNumber, episodeNumber),
+      applyEpisodeMutation(
+        summary,
+        seasons,
+        (watched) => markWatchedUpTo(watched, seasons, seasonNumber, episodeNumber),
+        { bulk: true },
       ),
     markSeasonWatchedUpTo: (summary, seasons, seasonNumber, episodeNumber) =>
-      applyEpisodeMutation(summary, seasons, (watched) =>
-        markSeasonUpTo(watched, seasonNumber, episodeNumber),
+      applyEpisodeMutation(
+        summary,
+        seasons,
+        (watched) => markSeasonUpTo(watched, seasonNumber, episodeNumber),
+        { bulk: true },
       ),
   };
 

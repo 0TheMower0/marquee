@@ -621,11 +621,11 @@ which destroys the range encoding and takes a 30-show library's episode data
 from ~3 KB back to ~183 KB — measured, see the note on `EpisodeRange` in
 `lib/tracking/types.ts`.
 
-**Phase 5 (streaks) and Phase 8 (Year in Review) both need watch dates.** When
-they land, they get a **separate, append-only log keyed by date** — roughly
-"on 2026-07-14, these episodes were watched" — living in its own storage
-namespace with its own schema version. Progress state and watch history are
-different concerns with different shapes and different access patterns:
+**Phase 5 (streaks) and Phase 8 (Year in Review) both need watch dates.** That
+log now exists — `lib/watchlog/`, built in Phase 5 Step 1 exactly as promised
+here: a separate, append-only store keyed by date, in its own namespace with
+its own schema version. Progress state and watch history are different
+concerns with different shapes and different access patterns:
 
 | | progress | watch history |
 |---|---|---|
@@ -635,6 +635,123 @@ different concerns with different shapes and different access patterns:
 | mutability | edited freely | append-only |
 
 Merging them forces one of the two to adopt the wrong shape. Keep them apart.
+
+## Watch history — `lib/watchlog/`
+
+```
+lib/watchlog/
+  types.ts    WatchEvent, day keys, local-date helpers, validation  [pure, tested]
+  diff.ts     addedEpisodes(before, after)                          [pure, tested]
+  queries.ts  streaks, per-year, totals, hour/weekday buckets       [pure, tested]
+  store.ts    watchLogStore — namespace "watchlog", v1
+  index.ts    public surface + appendWatchEvents / logEpisodeMutation
+```
+
+### One record per LOCAL calendar day
+
+```
+marquee:watchlog:2026-07-30 → { v: 1, d: [ {k,t,s,e,m,b}, ... ] }
+```
+
+`Store.keys()` strips the prefix and returns the bare key, so with a
+day-keyed layout **the set of days with activity is `keys()` alone — no
+record values are parsed at all.** Streak math reduces to listing keys and
+sorting strings. That property is why keys in this namespace must stay
+*exclusively* day keys: a stray metadata record would silently corrupt every
+streak. "Tracking since" is derived as the earliest key precisely so no such
+record is needed.
+
+Measured at 3 episodes/day for two years (~2,000 events):
+
+| shape | size |
+|---|---|
+| one key per event, ISO timestamp | ~310 KB |
+| **day-bucketed (chosen)** | **~128 KB** |
+| day-bucketed with tuple events | ~64 KB |
+
+The tuple form was rejected on purpose: it halves a number already at ~2.5%
+of budget, and costs real legibility in validation and future migrations. The
+episode-range encoding earned its opacity with a 65x win; this would not.
+
+### Timezone: the local date is frozen at write time
+
+The day key is `YYYY-MM-DD` in the **device's timezone when the event was
+recorded**, and is never recomputed. Storing an instant and deriving the day
+at read time is actively wrong here: watch something at 8am Tuesday in Tokyo,
+fly to LA, and that instant re-derives as Monday — **the user's streak history
+rewrites itself because they travelled.** The day you watched something is a
+fact about where you *were*.
+
+⚠️ **Do not use `toISOString().slice(0, 10)` for this.** That returns the UTC
+date. `lib/utils/dates.ts` uses that pattern for *air dates*, where UTC is
+defensible, but here it would misfile evening viewing in every western
+timezone. Demonstrated concretely at UTC+3: an event at 00:30 local on 30 July
+files under **29 July** with the UTC pattern. `localDayKey()` uses
+`getFullYear`/`getMonth`/`getDate` — the local accessors — and the suite
+passes under both UTC and a non-zero-offset host.
+
+Accepted edge case: crossing timezones can produce two day keys that felt like
+one day, or skip one. That is the honest consequence of local dates.
+
+### What this store is and is NOT authoritative for
+
+**The log answers WHEN. Tracking answers HOW MUCH.**
+
+Lifetime totals come from tracking state (`countRanges`), never from log
+length. That split resolves two problems at once:
+
+- **Backfill.** Existing users have watched data with no dates, and there is
+  no honest way to invent them — `updatedAt` is one timestamp for a whole
+  entry, so backfilling Breaking Bad from it would fabricate a 62-episode day
+  and a streak that never happened. So **nothing is backfilled.** The log
+  starts empty and `trackingSince()` makes the gap legible instead of
+  invisible.
+- **Un-marking.** Because totals never come from log rows, the log stays
+  genuinely append-only — un-marking rewrites nothing and corrupts no count.
+
+If XP were computed from log rows instead, backfill would reset every existing
+user to zero and un-marking would require deleting from an "append-only" log.
+Neither is necessary. **Do not re-point XP at the log.**
+
+### Wiring: one diff, not six call sites
+
+`applyEpisodeMutation` in `lib/tracking/context.tsx` is already the funnel
+every episode operation passes through, and it holds both the before and after
+`WatchedEpisodes`. `addedEpisodes()` diffs them, so `markEpisode` /
+`markSeason` / `markSeasonUpTo` / `markWatchedUpTo` are all covered uniformly —
+including operations added later — with no per-operation logging code.
+Verified live: ticking S1E3 then hitting "mark season watched" logs **6 events,
+not 7** — E3 is not re-logged, and keeps its non-bulk provenance.
+
+Un-marks produce an empty diff and log nothing. Title-level `setStatus` logs
+one movie (`k:"m"`) or one whole-show (`k:"t"`) event, and only on the
+transition *into* watched, so re-marking can't duplicate.
+
+`k:"t"` exists because the coarse "Watched" button sets `status` with empty
+ranges and genuinely does not know which episodes exist — a third kind rather
+than a silent gap for a common action.
+
+### The `b` (bulk) flag, and the thing it is *not* for
+
+Worth being precise, because the obvious worry is the wrong one: **N events on
+one day does not break streak math.** Streaks count distinct days, so 13
+events today is one day either way. The real problem is honesty — marking a
+season watched today does not mean 13 episodes were *watched* today, and
+logging it flat would invent a binge day in Year in Review. Streaks can still
+credit the day; YiR can decline to call it a record session.
+
+`bulk` is passed explicitly by each context method rather than inferred from
+diff size. Inference happens to be correct today but would silently
+misclassify a future operation, and this field is unrecoverable once written
+wrong.
+
+### Log writes never block or fail a tracking write
+
+Appended only *after* the tracking write succeeds (never log what didn't
+persist), fire-and-forget, errors warned and swallowed. Marking something
+watched must not fail because a history record couldn't be appended. One
+read-modify-write per **day**, so a 13-episode season mark is one storage
+round trip, not 13 — with the same no-lock caveat as the multi-tab gap below.
 
 ### Known gap: multi-tab
 
@@ -1371,6 +1488,22 @@ do not implement them early.
         would misdirect the user.
 
 **Phase 4 is complete.**
+
+## Phase 5 status
+
+- [x] **Step 1** — The append-only watch-date log (`lib/watchlog/`), fulfilling
+      the promise made in "Watch DATES are a separate store" since Phase 3.
+      See that section above for the full design: day-bucketed records keyed
+      by **local** calendar date frozen at write time, `keys()`-only streak
+      math, no backfill (an honest gap, never invented dates), and the
+      when/how-much split that keeps the log genuinely append-only. Wired into
+      every mutation through a single before/after diff in
+      `applyEpisodeMutation` rather than six call sites. Ships the pure query
+      functions (streaks, per-year, totals, hour/weekday buckets) with 64
+      tests; **no UI** — that is Step 3.
+- [ ] **Step 2** — XP and levels
+- [ ] **Step 3** — Streaks and badges UI
+- [ ] **Step 4** — PWA manifest + service worker
 
 ---
 
