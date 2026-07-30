@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { ContentErrorState } from "@/components/content/content-error-state";
+import { BackdropImage } from "@/components/title/backdrop-image";
+import { PosterImage } from "@/components/title/poster-image";
 import { SeasonList } from "@/components/tracking/season-list";
 import { ShowProgressBadge } from "@/components/tracking/show-progress-badge";
 import { TrackingActions } from "@/components/tracking/tracking-actions";
@@ -23,7 +25,12 @@ import type {
   Title,
   TitleStatus,
 } from "@/lib/content/types";
-import { initialsFor } from "@/lib/utils/initials";
+
+/** Matches the poster's w-24/sm:w-36/lg:w-44 breakpoints exactly, rather
+ *  than approximating with vw — a single hero poster, unlike a grid, has a
+ *  small enough number of exact-width breakpoints that there is no reason
+ *  not to just state them. */
+const HERO_POSTER_SIZES = "(min-width: 1024px) 176px, (min-width: 640px) 144px, 96px";
 
 /**
  * Route params are strings from the URL and could be anything. Narrowing here
@@ -173,12 +180,11 @@ export default async function TitleDetailPage({
             opacity so the title text keeps its contrast regardless of how
             bright the artwork happens to be. */}
         {title.backdropUrl && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <BackdropImage
             src={title.backdropUrl}
-            alt=""
-            aria-hidden="true"
-            className="absolute inset-0 size-full object-cover opacity-45"
+            gradientFrom={placeholder.gradientFrom}
+            gradientTo={placeholder.gradientTo}
+            className="object-cover opacity-45"
           />
         )}
 
@@ -192,29 +198,16 @@ export default async function TitleDetailPage({
         <div className="relative mx-auto flex w-full max-w-7xl gap-4 px-4 pt-8 pb-10 sm:gap-6 sm:px-6 sm:pt-12 lg:px-8">
           {/* Poster. shrink-0 + min-w-0 on the sibling is what keeps a long
               title from squeezing this to nothing at 375px. */}
-          <div
-            className="ring-line-strong/60 relative aspect-[2/3] w-24 shrink-0 overflow-hidden rounded-md shadow-2xl ring-1 sm:w-36 lg:w-44"
-            style={{
-              backgroundImage: `linear-gradient(145deg, ${placeholder.gradientFrom}, ${placeholder.gradientTo})`,
-            }}
-          >
-            {/* Same monogram fallback the ticket cards use, so a title looks
-                like itself whether you're seeing it in the grid or here. */}
-            <span
-              aria-hidden="true"
-              className="font-display absolute inset-0 flex items-center justify-center text-[2.5rem] leading-none text-white/25 select-none sm:text-[3.5rem]"
-            >
-              {initialsFor(title.name)}
-            </span>
-
-            {title.posterUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={title.posterUrl}
-                alt={`${title.name} poster`}
-                className="absolute inset-0 size-full object-cover"
-              />
-            )}
+          <div className="ring-line-strong/60 relative aspect-[2/3] w-24 shrink-0 overflow-hidden rounded-md shadow-2xl ring-1 sm:w-36 lg:w-44">
+            <PosterImage
+              src={title.posterUrl}
+              alt={`${title.name} poster`}
+              name={title.name}
+              placeholder={placeholder}
+              sizes={HERO_POSTER_SIZES}
+              priority
+              initialsClassName="text-[2.5rem] text-white/25 sm:text-[3.5rem]"
+            />
           </div>
 
           <div className="min-w-0 flex-1 self-end">

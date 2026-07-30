@@ -1015,6 +1015,36 @@ do not implement them early.
 
 **Phase 3 is complete.**
 
+## Phase 4 status
+
+- [x] **Step 1** — Real poster and backdrop images. The gradient placeholder
+      is now the FALLBACK, not the default — it still renders whenever
+      there's no `posterUrl`/`backdropUrl` (mock mode, always) or the real
+      image failed to load (tmdb mode, occasionally), via `onError`.
+      next/image throughout: `image.tmdb.org` permitted as a remote pattern
+      in `next.config.ts`; the TMDB poster size in
+      `lib/content/tmdb/normalize.ts` is split into `posterCard` (w342 —
+      every grid/list context: TicketCard, search results,
+      similar/recommendations, Up Next cards) vs `posterDetail` (w500 — only
+      the one, larger detail-page hero poster), so a 230px-wide grid card
+      and a 176px hero poster never ship the same source bytes; each render
+      site then supplies its own `sizes` (see `POSTER_GRID_SIZES` in
+      `lib/utils/grid.ts` for the grid math, and the `sizes` constants in
+      `up-next-card.tsx` / the detail page for the other two) so next/image's
+      own responsive `srcset` negotiation picks correctly-small derivatives
+      per breakpoint on top of that. Blur-up is a hand-rolled `blurDataURL`
+      matching each title's own placeholder gradient
+      (`lib/utils/image.ts`) — Next can only auto-generate a blur preview for
+      statically imported local files, not runtime remote URLs, so this
+      reuses the same two gradient stops the true fallback already shows,
+      meaning loading and "no image" share one visual language instead of
+      two. `components/title/poster-image.tsx` (TicketCard, the Up Next
+      card, and the hero poster) and `backdrop-image.tsx` (the hero backdrop
+      only — no monogram, since the hero's own gradient wash layer is
+      already its fallback) are both Client Components specifically because
+      the `onError` handler is an event handler, and a Server Component
+      cannot pass one to next/image across the boundary.
+
 ---
 
 ## Legal / attribution

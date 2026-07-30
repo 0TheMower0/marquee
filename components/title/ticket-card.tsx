@@ -2,8 +2,9 @@ import Link from "next/link";
 
 import { TicketProgressBar } from "@/components/tracking/ticket-progress-bar";
 import { TrackingBadge } from "@/components/tracking/tracking-badge";
+import { PosterImage } from "@/components/title/poster-image";
 import { cn } from "@/lib/utils/cn";
-import { initialsFor } from "@/lib/utils/initials";
+import { POSTER_GRID_SIZES } from "@/lib/utils/grid";
 import type { TitleSummary } from "@/lib/content/types";
 
 /**
@@ -32,40 +33,16 @@ interface TicketCardProps {
 }
 
 function TicketArt({ title, priority }: { title: TitleSummary; priority?: boolean }) {
-  const { placeholder, posterUrl, name } = title;
-
   return (
-    <div
-      className="relative aspect-[2/3] w-full overflow-hidden"
-      style={{
-        // Inline because the gradient is per-title data, not a design decision
-        // — it cannot be expressed as a static utility class.
-        backgroundImage: `linear-gradient(145deg, ${placeholder.gradientFrom}, ${placeholder.gradientTo})`,
-      }}
-    >
-      {/* Initials sit UNDER any real poster, so mock mode gets characterful
-          art and tmdb mode gets a graceful backdrop if an image 404s. */}
-      <span
-        aria-hidden="true"
-        className="font-display absolute inset-0 flex items-center justify-center text-[3.5rem] leading-none text-white/20 select-none"
-      >
-        {initialsFor(name)}
-      </span>
-
-      {posterUrl && (
-        // Plain <img>, not next/image: these are third-party CDN URLs that only
-        // exist in tmdb mode, and routing them through the optimizer would add
-        // a server hop plus remotePatterns config for no benefit — TMDB already
-        // serves correctly-sized, cached derivatives (we request w500).
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={posterUrl}
-          alt=""
-          loading={priority ? "eager" : "lazy"}
-          decoding="async"
-          className="absolute inset-0 size-full object-cover"
-        />
-      )}
+    <div className="relative aspect-[2/3] w-full overflow-hidden">
+      <PosterImage
+        src={title.posterUrl}
+        alt=""
+        name={title.name}
+        placeholder={title.placeholder}
+        sizes={POSTER_GRID_SIZES}
+        priority={priority}
+      />
 
       {/* Scrim so stub text never collides with a bright poster edge. */}
       <div className="from-surface/90 absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t to-transparent" />

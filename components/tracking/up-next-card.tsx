@@ -3,11 +3,21 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { PosterImage } from "@/components/title/poster-image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { TitleSummary } from "@/lib/content/types";
 import type { SeasonEpisodeCounts, UpNextItem } from "@/lib/tracking";
-import { initialsFor } from "@/lib/utils/initials";
+
+/**
+ * Approximate, same reasoning as POSTER_GRID_SIZES: this card renders at a
+ * fixed ~256-288px in the Home rail's scroll slots, but fluidly at up to
+ * ~450px in Library's Continue Watching grid (1/2/3 columns). Covers the
+ * wider of the two rather than the narrower, since over-requesting a size
+ * next/image's own srcset negotiation still bounds is cheaper than a visibly
+ * soft image in the grid.
+ */
+const UP_NEXT_ART_SIZES = "(min-width: 1024px) 320px, (min-width: 640px) 45vw, 90vw";
 
 /**
  * The card shared by every Up Next surface — the Home rail and Library's
@@ -77,28 +87,15 @@ export function UpNextCard({
     // tailwind-merge bug CLAUDE.md documents. Plain rounded card instead.
     <article className="bg-surface border-line-subtle w-full overflow-hidden rounded-lg border">
       <Link href={`/title/tv/${summary.id}`} className="block focus-visible:outline-offset-4">
-        <div
-          className="relative aspect-video w-full overflow-hidden"
-          style={{
-            backgroundImage: `linear-gradient(145deg, ${summary.placeholder.gradientFrom}, ${summary.placeholder.gradientTo})`,
-          }}
-        >
-          <span
-            aria-hidden="true"
-            className="font-display absolute inset-0 flex items-center justify-center text-[2.5rem] leading-none text-white/20 select-none"
-          >
-            {initialsFor(summary.name)}
-          </span>
-          {summary.posterUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={summary.posterUrl}
-              alt=""
-              loading="lazy"
-              decoding="async"
-              className="absolute inset-0 size-full object-cover"
-            />
-          )}
+        <div className="relative aspect-video w-full overflow-hidden">
+          <PosterImage
+            src={summary.posterUrl}
+            alt=""
+            name={summary.name}
+            placeholder={summary.placeholder}
+            sizes={UP_NEXT_ART_SIZES}
+            initialsClassName="text-[2.5rem]"
+          />
           <div className="from-surface/90 absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t to-transparent" />
           {isRediscovery && (
             <Badge variant="secondary" size="sm" className="absolute top-2 left-2">

@@ -118,10 +118,24 @@ export interface TmdbWatchProviderResponse {
 
 const IMAGE_BASE = "https://image.tmdb.org/t/p";
 
-/** Sized rather than `original` — original posters can be several MB, which
- *  would wreck the Home grid on mobile data. */
+/**
+ * Sized rather than `original` — original posters can be several MB, which
+ * would wreck the Home grid on mobile data.
+ *
+ * Poster is split in two because "a poster" means very different pixel
+ * budgets in different places: `posterCard` backs every list/grid context
+ * (TicketCard, search results, similar/recommendations, the Up Next card,
+ * and the TrackingEntry snapshots that echo a TitleSummary into My
+ * Library) where cards render well under 320px wide even on desktop —
+ * see POSTER_GRID_SIZES in lib/utils/grid.ts. `posterDetail` backs only
+ * the title detail hero's single, larger poster (toTitle overrides
+ * `posterUrl` again with it — see the comment there). Shipping the bigger
+ * size into every grid card would be exactly the "w500 into a 100px rail
+ * slot" waste this split exists to avoid.
+ */
 const SIZES = {
-  poster: "w500",
+  posterCard: "w342",
+  posterDetail: "w500",
   backdrop: "w1280",
   profile: "w185",
   still: "w300",
@@ -319,7 +333,7 @@ export function toTitleSummary(
     year: parseYear(mediaType === "movie" ? raw.release_date : raw.first_air_date),
     overview: nullableString(raw.overview) ?? "",
     genres: extractGenres(raw),
-    posterUrl: imageUrl(raw.poster_path, "poster"),
+    posterUrl: imageUrl(raw.poster_path, "posterCard"),
     placeholder,
     rating: parseRating(raw.vote_average, raw.vote_count),
   };
@@ -369,6 +383,11 @@ export function toTitle(raw: TmdbTitleDetail, mediaType: MediaType): Title | nul
     originalName: nullableString(
       mediaType === "movie" ? raw.original_title : raw.original_name,
     ),
+    // Overrides the summary's posterCard-sized URL with a larger one — the
+    // detail hero renders one poster at up to 176px CSS width across a range
+    // of device pixel ratios, not a grid full of 100-230px cards. See the
+    // note on SIZES above.
+    posterUrl: imageUrl(raw.poster_path, "posterDetail"),
     backdropUrl: imageUrl(raw.backdrop_path, "backdrop"),
     status: parseStatus(raw.status),
     // Runtime is per-episode for TV, which is not what `runtimeMinutes` means
@@ -396,7 +415,7 @@ export function toSeason(raw: TmdbSeasonSummary): Season | null {
     overview: nullableString(raw.overview) ?? "",
     episodeCount: positiveIntOrNull(raw.episode_count) ?? 0,
     airDate: nullableString(raw.air_date),
-    posterUrl: imageUrl(raw.poster_path, "poster"),
+    posterUrl: imageUrl(raw.poster_path, "posterCard"),
   };
 }
 
