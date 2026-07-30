@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 
 import { ContentErrorState } from "@/components/content/content-error-state";
 import { BackdropImage } from "@/components/title/backdrop-image";
+import { CastCrewSection } from "@/components/title/cast-crew-section";
 import { PosterImage } from "@/components/title/poster-image";
+import { WatchProvidersSection } from "@/components/title/watch-providers-section";
 import { SeasonList } from "@/components/tracking/season-list";
 import { ShowProgressBadge } from "@/components/tracking/show-progress-badge";
 import { TrackingActions } from "@/components/tracking/tracking-actions";
@@ -24,6 +26,7 @@ import type {
   Season,
   Title,
   TitleStatus,
+  WatchProvider,
 } from "@/lib/content/types";
 import { resolveTitleTheme, titleThemeVars } from "@/lib/theme";
 
@@ -143,6 +146,18 @@ export default async function TitleDetailPage({
         throw error;
       }
     }
+  }
+
+  // Region defaults to "US" inside the provider (see the note on
+  // WatchProvidersSection for what that does and doesn't mean). Failure here
+  // degrades the same way "nothing listed" does — the section just doesn't
+  // render — rather than surfacing a ContentErrorState box for what is a
+  // non-critical, decorative part of the page.
+  let watchProviders: WatchProvider[] = [];
+  try {
+    watchProviders = await getContentProvider().getWatchProviders(id, mediaType);
+  } catch {
+    // swallowed — see comment above
   }
 
   const { placeholder } = title;
@@ -335,8 +350,11 @@ export default async function TitleDetailPage({
           </section>
         )}
 
-        {/* Cast and watch providers arrive in Phase 4. Nothing is stubbed in
-            here for them on purpose. */}
+        <div className="mt-10 space-y-10">
+          <CastCrewSection cast={title.cast} crew={title.crew} />
+          <WatchProvidersSection providers={watchProviders} />
+        </div>
+
         <div className="mt-10">
           <Button href="/" variant="ghost">
             ← Back to trending

@@ -3,6 +3,7 @@ import "server-only";
 import { derivePlaceholderArt } from "../shared/placeholder";
 import type {
   CastMember,
+  CrewMember,
   Episode,
   Genre,
   MediaType,
@@ -60,6 +61,22 @@ interface TmdbCastEntry {
   profile_path?: string | null;
 }
 
+interface TmdbCrewEntry {
+  id?: number;
+  name?: string | null;
+  department?: string | null;
+  job?: string | null;
+  profile_path?: string | null;
+}
+
+/** TV-only. A stable, show-level credit — unlike `credits.crew`, which
+ *  reflects whichever episode TMDB last indexed. See `toCrew`. */
+interface TmdbCreatedBy {
+  id?: number;
+  name?: string | null;
+  profile_path?: string | null;
+}
+
 export interface TmdbSeasonSummary {
   season_number?: number;
   name?: string | null;
@@ -76,7 +93,8 @@ export interface TmdbTitleDetail extends TmdbListItem {
   number_of_episodes?: number | null;
   status?: string | null;
   seasons?: TmdbSeasonSummary[];
-  credits?: { cast?: TmdbCastEntry[] };
+  credits?: { cast?: TmdbCastEntry[]; crew?: TmdbCrewEntry[] };
+  created_by?: TmdbCreatedBy[]; // tv only
 }
 
 interface TmdbEpisode {
@@ -362,6 +380,77 @@ function toCastMember(raw: TmdbCastEntry, index: number): CastMember | null {
   };
 }
 
+const WRITING_CREW_CAP = 5;
+
+/**
+ * Key crew, deliberately scoped narrower than "everyone who worked on this":
+ *
+ * - TV: only `created_by`. That is the one show-level credit TMDB keeps
+ *   stable; `credits.crew` on a TV show detail reflects whichever episode
+ *   TMDB most recently indexed, not the series as a whole, so a "director" or
+ *   "writer" pulled from it would attribute a random episode's crew to the
+ *   entire show. Not attempted rather than shown wrong.
+ * - Movie: `credits.crew` filtered to department "Directing" + job "Director"
+ *   (excludes "Assistant Director" etc., which share the department), and
+ *   department "Writing" (covers TMDB's job variants — "Writer",
+ *   "Screenplay", "Story", "Teleplay" — without hardcoding each one).
+ *   De-duplicated by id, since one person can hold multiple writing jobs on
+ *   the same film, and capped so an extensively-adapted screenplay's credit
+ *   list doesn't run unbounded.
+ */
+function toCrew(raw: TmdbTitleDetail, mediaType: MediaType): CrewMember[] {
+  if (mediaType === "tv") {
+    return (raw.created_by ?? [])
+      .map((person): CrewMember | null => {
+        const name = nullableString(person.name);
+        if (person.id === undefined || !name) return null;
+        return {
+          id: String(person.id),
+          name,
+          role: "creator",
+          profileUrl: imageUrl(person.profile_path, "profile"),
+        };
+      })
+      .filter((member): member is CrewMember => member !== null);
+  }
+
+  const crew = raw.credits?.crew ?? [];
+  // Dedup is scoped to ONE role's own list, not shared across director/writer
+  // — someone who is both (Matt Reeves on The Batman: director AND one of
+  // four credited writers) must appear in both lists. An earlier version of
+  // this function shared one Set across both filters, which silently dropped
+  // Reeves from Writers because he'd already been marked "seen" as Director.
+  // Caught live against real TMDB data, not by any test — mock mode's crew is
+  // hand-authored and never exercises this function at all.
+  function toMembers(
+    people: TmdbCrewEntry[],
+    role: "director" | "writer",
+  ): CrewMember[] {
+    const seen = new Set<string>();
+    const members: CrewMember[] = [];
+    for (const person of people) {
+      const name = nullableString(person.name);
+      if (person.id === undefined || !name) continue;
+      const id = String(person.id);
+      if (seen.has(id)) continue; // e.g. one person credited "Screenplay" AND "Story"
+      seen.add(id);
+      members.push({ id, name, role, profileUrl: imageUrl(person.profile_path, "profile") });
+    }
+    return members;
+  }
+
+  const directors = toMembers(
+    crew.filter((person) => person.department === "Directing" && person.job === "Director"),
+    "director",
+  );
+  const writers = toMembers(
+    crew.filter((person) => person.department === "Writing"),
+    "writer",
+  ).slice(0, WRITING_CREW_CAP);
+
+  return [...directors, ...writers];
+}
+
 /**
  * Throws rather than returning null: this backs `getTitle`, where the caller
  * asked for one specific title and a silent null would surface as a blank
@@ -400,6 +489,7 @@ export function toTitle(raw: TmdbTitleDetail, mediaType: MediaType): Title | nul
       .map(toCastMember)
       .filter((member): member is CastMember => member !== null)
       .sort((a, b) => a.order - b.order),
+    crew: toCrew(raw, mediaType),
   };
 }
 

@@ -35,6 +35,23 @@ export interface CastMember {
   profileUrl: string | null;
 }
 
+/**
+ * "creator" is TV-only (TMDB's `created_by`, a stable show-level credit).
+ * "director"/"writer" are movie-only — TMDB's per-title `credits.crew` is
+ * reliable for a film, but a TV show's aggregate crew reflects whichever
+ * episode was fetched last, not the show as a whole, so this deliberately
+ * does not attempt director/writer credits for TV. See the note in
+ * tmdb/normalize.ts's `toCrew`.
+ */
+export type CrewRole = "creator" | "director" | "writer";
+
+export interface CrewMember {
+  id: string;
+  name: string;
+  role: CrewRole;
+  profileUrl: string | null;
+}
+
 export type WatchProviderType = "stream" | "rent" | "buy";
 
 export interface WatchProvider {
@@ -93,6 +110,8 @@ export interface Title extends TitleSummary {
   /** TV only. Null for movies. */
   episodeCount: number | null;
   cast: CastMember[];
+  /** Creator (TV) or director/writers (movie) — see the note on `CrewRole`. */
+  crew: CrewMember[];
 }
 
 export interface Season {

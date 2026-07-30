@@ -4,19 +4,25 @@
  * seasons, The Office: 9, Game of Thrones: 8) so Phase 3's episode-progress
  * work has something realistic to chew on.
  *
- * Titles, years, cast, and season/episode counts are public facts — the kind
- * of metadata any tracker app displays. Overview text is written originally
- * for this project, not copied from any source.
+ * Titles, years, cast, crew, and season/episode counts are public facts —
+ * the kind of metadata any tracker app displays. Overview text is written
+ * originally for this project, not copied from any source.
  *
- * `cast` lives on every entry here because catalog entries back BOTH `Title`
- * (detail) and, via `toSummary()` in ./index.ts, `TitleSummary` (lists) — the
- * summary conversion is what actually drops cast for list endpoints. See the
- * note on `Title` in ../types.ts for why that split exists, and do not "fix"
- * toSummary() to include cast — that would silently violate the contract
- * tmdbProvider has to honor too (TMDB's list endpoints genuinely have no
- * credits data).
+ * `cast`/`crew` live on every entry here because catalog entries back BOTH
+ * `Title` (detail) and, via `toSummary()` in ./index.ts, `TitleSummary`
+ * (lists) — the summary conversion is what actually drops them for list
+ * endpoints. See the note on `Title` in ../types.ts for why that split
+ * exists, and do not "fix" toSummary() to include either — that would
+ * silently violate the contract tmdbProvider has to honor too (TMDB's list
+ * endpoints genuinely have no credits data).
+ *
+ * `crew` is intentionally thin next to `cast`: movies get a director plus
+ * writer(s) (real, verifiable credits), TV shows get only their creator(s) —
+ * see the note on `CrewRole` in ../types.ts for why TV doesn't attempt
+ * director/writer. Grey's Anatomy's `crew` is deliberately `[]`, the "no
+ * crew credited" edge case.
  */
-import type { CastMember, Genre, Title, TitleStatus } from "../types";
+import type { CastMember, CrewMember, CrewRole, Genre, Title, TitleStatus } from "../types";
 
 const G = {
   crime: { id: "crime", name: "Crime" },
@@ -41,6 +47,10 @@ function member(
   order: number,
 ): CastMember {
   return { id, name, character, order, profileUrl: null };
+}
+
+function crewMember(id: string, name: string, role: CrewRole): CrewMember {
+  return { id, name, role, profileUrl: null };
 }
 
 /** Every field of `Title` except `placeholder`, which is derived
@@ -73,6 +83,11 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("james-caan", "James Caan", "Sonny Corleone", 2),
       member("diane-keaton", "Diane Keaton", "Kay Adams", 3),
     ],
+    crew: [
+      crewMember("francis-ford-coppola", "Francis Ford Coppola", "director"),
+      crewMember("mario-puzo", "Mario Puzo", "writer"),
+      crewMember("francis-ford-coppola", "Francis Ford Coppola", "writer"),
+    ],
   },
   {
     id: "jaws",
@@ -94,6 +109,11 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("roy-scheider", "Roy Scheider", "Martin Brody", 0),
       member("robert-shaw", "Robert Shaw", "Quint", 1),
       member("richard-dreyfuss", "Richard Dreyfuss", "Matt Hooper", 2),
+    ],
+    crew: [
+      crewMember("steven-spielberg", "Steven Spielberg", "director"),
+      crewMember("peter-benchley", "Peter Benchley", "writer"),
+      crewMember("carl-gottlieb", "Carl Gottlieb", "writer"),
     ],
   },
   {
@@ -117,6 +137,10 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("tom-skerritt", "Tom Skerritt", "Dallas", 1),
       member("ian-holm", "Ian Holm", "Ash", 2),
     ],
+    crew: [
+      crewMember("ridley-scott", "Ridley Scott", "director"),
+      crewMember("dan-obannon", "Dan O'Bannon", "writer"),
+    ],
   },
   {
     id: "blade-runner",
@@ -139,6 +163,11 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("rutger-hauer", "Rutger Hauer", "Roy Batty", 1),
       member("sean-young", "Sean Young", "Rachael", 2),
     ],
+    crew: [
+      crewMember("ridley-scott", "Ridley Scott", "director"),
+      crewMember("hampton-fancher", "Hampton Fancher", "writer"),
+      crewMember("david-peoples", "David Peoples", "writer"),
+    ],
   },
   {
     id: "do-the-right-thing",
@@ -160,6 +189,10 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("spike-lee", "Spike Lee", "Mookie", 0),
       member("danny-aiello", "Danny Aiello", "Sal", 1),
       member("ruby-dee", "Ruby Dee", "Mother Sister", 2),
+    ],
+    crew: [
+      crewMember("spike-lee", "Spike Lee", "director"),
+      crewMember("spike-lee", "Spike Lee", "writer"),
     ],
   },
   {
@@ -184,6 +217,11 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("uma-thurman", "Uma Thurman", "Mia Wallace", 2),
       member("bruce-willis", "Bruce Willis", "Butch Coolidge", 3),
     ],
+    crew: [
+      crewMember("quentin-tarantino", "Quentin Tarantino", "director"),
+      crewMember("quentin-tarantino", "Quentin Tarantino", "writer"),
+      crewMember("roger-avary", "Roger Avary", "writer"),
+    ],
   },
   {
     id: "the-shawshank-redemption",
@@ -205,6 +243,10 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("tim-robbins", "Tim Robbins", "Andy Dufresne", 0),
       member("morgan-freeman", "Morgan Freeman", 'Ellis "Red" Redding', 1),
       member("bob-gunton", "Bob Gunton", "Warden Norton", 2),
+    ],
+    crew: [
+      crewMember("frank-darabont", "Frank Darabont", "director"),
+      crewMember("frank-darabont", "Frank Darabont", "writer"),
     ],
   },
   {
@@ -228,6 +270,10 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("miyu-irino", "Miyu Irino", "Haku", 1),
       member("mari-natsuki", "Mari Natsuki", "Yubaba", 2),
     ],
+    crew: [
+      crewMember("hayao-miyazaki", "Hayao Miyazaki", "director"),
+      crewMember("hayao-miyazaki", "Hayao Miyazaki", "writer"),
+    ],
   },
   {
     id: "city-of-god",
@@ -249,6 +295,10 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("alexandre-rodrigues", "Alexandre Rodrigues", "Rocket", 0),
       member("leandro-firmino", "Leandro Firmino", "Li'l Zé", 1),
       member("phellipe-haagensen", "Phellipe Haagensen", "Bené", 2),
+    ],
+    crew: [
+      crewMember("fernando-meirelles", "Fernando Meirelles", "director"),
+      crewMember("braulio-mantovani", "Bráulio Mantovani", "writer"),
     ],
   },
   {
@@ -272,6 +322,12 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("charlize-theron", "Charlize Theron", "Imperator Furiosa", 1),
       member("nicholas-hoult", "Nicholas Hoult", "Nux", 2),
     ],
+    crew: [
+      crewMember("george-miller", "George Miller", "director"),
+      crewMember("george-miller", "George Miller", "writer"),
+      crewMember("brendan-mccarthy", "Brendan McCarthy", "writer"),
+      crewMember("nick-lathouris", "Nick Lathouris", "writer"),
+    ],
   },
   {
     id: "parasite",
@@ -293,6 +349,11 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("song-kang-ho", "Song Kang-ho", "Kim Ki-taek", 0),
       member("lee-sun-kyun", "Lee Sun-kyun", "Park Dong-ik", 1),
       member("cho-yeo-jeong", "Cho Yeo-jeong", "Park Yeon-kyo", 2),
+    ],
+    crew: [
+      crewMember("bong-joon-ho", "Bong Joon-ho", "director"),
+      crewMember("bong-joon-ho", "Bong Joon-ho", "writer"),
+      crewMember("han-jin-won", "Han Jin-won", "writer"),
     ],
   },
   {
@@ -316,6 +377,12 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("stephanie-hsu", "Stephanie Hsu", "Joy Wang", 1),
       member("ke-huy-quan", "Ke Huy Quan", "Waymond Wang", 2),
     ],
+    crew: [
+      crewMember("daniel-kwan", "Daniel Kwan", "director"),
+      crewMember("daniel-scheinert", "Daniel Scheinert", "director"),
+      crewMember("daniel-kwan", "Daniel Kwan", "writer"),
+      crewMember("daniel-scheinert", "Daniel Scheinert", "writer"),
+    ],
   },
   {
     id: "oppenheimer",
@@ -338,6 +405,10 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("emily-blunt", "Emily Blunt", "Kitty Oppenheimer", 1),
       member("matt-damon", "Matt Damon", "Leslie Groves", 2),
       member("robert-downey-jr", "Robert Downey Jr.", "Lewis Strauss", 3),
+    ],
+    crew: [
+      crewMember("christopher-nolan", "Christopher Nolan", "director"),
+      crewMember("christopher-nolan", "Christopher Nolan", "writer"),
     ],
   },
 
@@ -364,6 +435,7 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("anna-gunn", "Anna Gunn", "Skyler White", 2),
       member("dean-norris", "Dean Norris", "Hank Schrader", 3),
     ],
+    crew: [crewMember("vince-gilligan", "Vince Gilligan", "creator")],
   },
   {
     id: "the-wire",
@@ -387,6 +459,7 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("idris-elba", "Idris Elba", "Stringer Bell", 2),
       member("sonja-sohn", "Sonja Sohn", "Kima Greggs", 3),
     ],
+    crew: [crewMember("david-simon", "David Simon", "creator")],
   },
   {
     id: "fleabag",
@@ -409,6 +482,7 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("sian-clifford", "Sian Clifford", "Claire", 1),
       member("andrew-scott", "Andrew Scott", "The Priest", 2),
     ],
+    crew: [crewMember("phoebe-waller-bridge", "Phoebe Waller-Bridge", "creator")],
   },
   {
     id: "chernobyl",
@@ -431,6 +505,7 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("stellan-skarsgard", "Stellan Skarsgård", "Boris Shcherbina", 1),
       member("emily-watson", "Emily Watson", "Ulana Khomyuk", 2),
     ],
+    crew: [crewMember("craig-mazin", "Craig Mazin", "creator")],
   },
   {
     id: "stranger-things",
@@ -453,6 +528,10 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("finn-wolfhard", "Finn Wolfhard", "Mike Wheeler", 1),
       member("winona-ryder", "Winona Ryder", "Joyce Byers", 2),
       member("david-harbour", "David Harbour", "Jim Hopper", 3),
+    ],
+    crew: [
+      crewMember("matt-duffer", "Matt Duffer", "creator"),
+      crewMember("ross-duffer", "Ross Duffer", "creator"),
     ],
   },
   {
@@ -477,6 +556,10 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("john-krasinski", "John Krasinski", "Jim Halpert", 2),
       member("jenna-fischer", "Jenna Fischer", "Pam Beesly", 3),
     ],
+    // "Developed by," in TMDB/US-broadcast terms — the US adaptation's
+    // stable show-level creator credit, distinct from Gervais/Merchant's
+    // original UK format.
+    crew: [crewMember("greg-daniels", "Greg Daniels", "creator")],
   },
   {
     id: "greys-anatomy",
@@ -499,6 +582,11 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("sandra-oh", "Sandra Oh", "Cristina Yang", 1),
       member("chandra-wilson", "Chandra Wilson", "Miranda Bailey", 2),
     ],
+    // Deliberately empty — the mock catalog's "no crew credited" case (real
+    // shows sometimes have thin or unlisted crew data too), matching how
+    // Grey's Anatomy already stands in as the "nothing special" control
+    // elsewhere in this file.
+    crew: [],
   },
   {
     id: "true-detective",
@@ -527,6 +615,7 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("woody-harrelson", "Woody Harrelson", "Marty Hart", 1),
       member("jodie-foster", "Jodie Foster", "Liz Danvers", 2),
     ],
+    crew: [crewMember("nic-pizzolatto", "Nic Pizzolatto", "creator")],
   },
   {
     id: "game-of-thrones",
@@ -549,6 +638,10 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("kit-harington", "Kit Harington", "Jon Snow", 1),
       member("peter-dinklage", "Peter Dinklage", "Tyrion Lannister", 2),
       member("lena-headey", "Lena Headey", "Cersei Lannister", 3),
+    ],
+    crew: [
+      crewMember("david-benioff", "David Benioff", "creator"),
+      crewMember("d-b-weiss", "D.B. Weiss", "creator"),
     ],
   },
   {
@@ -582,6 +675,7 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("ayo-edebiri", "Ayo Edebiri", "Sydney Adamu", 1),
       member("ebon-moss-bachrach", "Ebon Moss-Bachrach", "Richie", 2),
     ],
+    crew: [crewMember("christopher-storer", "Christopher Storer", "creator")],
   },
   {
     id: "avatar-the-last-airbender",
@@ -603,6 +697,10 @@ export const MOCK_CATALOG: CatalogEntry[] = [
       member("zach-tyler-eisen", "Zach Tyler Eisen", "Aang", 0),
       member("mae-whitman", "Mae Whitman", "Katara", 1),
       member("jack-desena", "Jack DeSena", "Sokka", 2),
+    ],
+    crew: [
+      crewMember("michael-dante-dimartino", "Michael Dante DiMartino", "creator"),
+      crewMember("bryan-konietzko", "Bryan Konietzko", "creator"),
     ],
   },
   {
@@ -634,6 +732,10 @@ export const MOCK_CATALOG: CatalogEntry[] = [
         1,
       ),
       member("michael-ontkean", "Michael Ontkean", "Harry Truman", 2),
+    ],
+    crew: [
+      crewMember("david-lynch", "David Lynch", "creator"),
+      crewMember("mark-frost", "Mark Frost", "creator"),
     ],
   },
 ];

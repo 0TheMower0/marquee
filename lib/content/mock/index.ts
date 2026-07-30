@@ -343,7 +343,10 @@ export const mockProvider: ContentProvider = {
     requireEntry(id, mediaType);
     // Mock mode has no real availability data. Returning [] is honest;
     // fabricating plausible-looking streaming-service names would read as
-    // real availability data, and nothing renders this yet anyway (Phase 4).
+    // real availability data. WatchProvidersSection (Phase 4 Step 3) renders
+    // nothing at all when this is empty, so mock mode simply never shows a
+    // "Where to Watch" section — that IS the graceful-empty-data path, not a
+    // gap in it.
     return [];
   },
 };

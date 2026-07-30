@@ -1182,6 +1182,48 @@ do not implement them early.
       independent-percentile bug. Adds `sharp` as an explicit dependency: it
       was already present as a transitive dep of Next, and relying on a
       transitive we don't declare is a latent break.
+- [x] **Step 3** — Cast, key crew, and "Where to Watch" on the detail page.
+      `Title.crew: CrewMember[]` is new (`lib/content/types.ts`); `CrewRole`
+      is deliberately narrower than "everyone who worked on this" —
+      `"creator"` (TV, from TMDB's stable `created_by`) or
+      `"director"`/`"writer"` (movie, from `credits.crew` filtered by
+      department). TV does NOT get director/writer credits: a TV show's
+      aggregate `credits.crew` reflects whichever episode TMDB last indexed,
+      not the series as a whole, so attributing it to the show would be
+      attributing a random episode's crew — not attempted rather than shown
+      wrong. See the doc comment on `toCrew` in `lib/content/tmdb/normalize.ts`.
+      `components/title/cast-crew-section.tsx` renders NOTHING (no heading,
+      no empty box) when both lists are empty, and cast/crew render
+      independently of each other — Grey's Anatomy in the mock catalog is
+      the deliberate "no crew credited" edge case, cast still shows fine on
+      its own. Cast/crew photos reuse `PosterImage` from Step 1 (same
+      gradient-plus-monogram fallback, just circular), namespaced by
+      `person-${id}` so the same real person gets the same gradient whether
+      they show up as an actor or a director.
+      `components/title/watch-providers-section.tsx` renders nothing when
+      `getWatchProviders()` returns `[]` — which is *always*, in mock mode
+      (see the comment in `lib/content/mock/index.ts`), so mock mode never
+      shows this section at all; that IS the graceful-empty-data path, not a
+      gap in it. Region defaults to `"US"` inside the provider — the
+      plumbing is region-*capable* (interface, API route, and this component
+      all accept/pass a region) but not region-*aware* of any real visitor,
+      since that needs geo-IP infrastructure this project doesn't have yet.
+      **JustWatch attribution is structural, not a separate step to
+      remember**: the credit lives inside the same early-return as the
+      section itself, so it is impossible to render provider data without
+      the credit or render the credit without data.
+      One real bug caught by browser-testing against live TMDB data, not by
+      any test: `toCrew`'s de-dup Set was originally shared across the
+      director and writer filters, so a person credited as both (Matt Reeves
+      on The Batman — director AND one of four writers) was silently dropped
+      from Writers because he'd already been marked "seen" as Director. Mock
+      mode's crew is hand-authored and never exercises `toCrew` at all, so
+      this shipped past lint/build/tests/mock-mode-verification and was only
+      caught by loading a real title in tmdb mode. Fixed by scoping the
+      de-dup Set to each role's own list. Don't reintroduce a shared Set —
+      the dedup is meant to catch one person holding two jobs in the SAME
+      role (e.g. "Screenplay" + "Story"), not to prevent a person appearing
+      in two different roles.
 
 ---
 
