@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { TicketProgressBar } from "@/components/tracking/ticket-progress-bar";
 import { TrackingBadge } from "@/components/tracking/tracking-badge";
 import { cn } from "@/lib/utils/cn";
 import { initialsFor } from "@/lib/utils/initials";
@@ -146,6 +147,11 @@ export function TicketCard({
           badge, not the Link underneath; everywhere else on the card still
           navigates normally. */}
       <TrackingBadge title={title} className="absolute top-2 right-2 z-10" />
+
+      {/* Also a sibling, for the same masking reason — see the comment in
+          ticket-progress-bar.tsx. Renders nothing unless this title is
+          "watching", so untracked/watchlist/watched cards are unaffected. */}
+      <TicketProgressBar title={title} />
     </article>
   );
 }

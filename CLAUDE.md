@@ -931,9 +931,9 @@ practice.
 | Phase | Scope |
 |---|---|
 | 1 *(done)* | Foundation: content abstraction + both providers, design system, app shell, Home, detail page |
-| **2** *(current)* | Search, My Library, watchlist/watched state |
-| 3 | Episode-level progress, "Up Next" engine |
-| 4 | Rich detail pages with artwork-derived dynamic theming |
+| 2 *(done)* | Search, My Library, watchlist/watched state |
+| 3 *(done)* | Episode-level progress, "Up Next" engine |
+| **4** *(current)* | Rich detail pages with artwork-derived dynamic theming |
 | 5 | XP, levels, streaks, badges; PWA manifest + service worker |
 | 6 | Supabase accounts, spoiler-safe comments, shared lists |
 | 7 | CSV importers (Trakt/Letterboxd/TV Time), new-episode notifications |
@@ -985,7 +985,7 @@ do not implement them early.
       weighted ranking (`lib/tracking/upnext.ts`, unit-tested — this
       introduced Vitest to the repo) surfaced as a Home rail
       (`components/tracking/up-next-rail.tsx`)
-- **Step 4** — Up Next surfaced beyond the Home rail. Reuses the Step 3
+- [x] **Step 4** — Up Next surfaced beyond the Home rail. Reuses the Step 3
       engine (`selectUpNextCandidates` / `buildUpNextItem` / `rankUpNext`) —
       the fetch-orchestration logic that used to live inline in
       `UpNextRail` was pulled out into `components/tracking/use-up-next-items.ts`
@@ -1000,12 +1000,20 @@ do not implement them early.
             (`components/tracking/continue-watching-section.tsx`) — the
             fuller, untruncated, responsive-grid view of the same ranked
             list, replacing what used to be a plain "Watching" `TitleGrid`
-      - [ ] Progress bars on `TicketCard` for in-progress (`"watching"`)
-            shows — deferred; the one item here with a real design decision
-            in it (`TicketCard` renders in Server Component contexts today
-            and has no tracking-aware data path yet)
+      - [x] Progress bars on `TicketCard` for in-progress (`"watching"`)
+            shows (`components/tracking/ticket-progress-bar.tsx`) — a client
+            wrapper rendered as a sibling of `TrackingBadge` (same reasoning:
+            a mask lives strictly on an inner, non-interactive element, so
+            this is never nested inside `.ticket-surface`/`.ticket-lift`).
+            Fetches `getSeasons` only — episode COUNTS are enough for a
+            percentage via the existing `getTitleProgress`, no per-episode
+            fetch needed. Positioned `calc(var(--ticket-stub) + 0.5rem)` up
+            from the card's bottom edge specifically to clear the
+            perforation seam, after reusing `.ticket-surface` itself
+            (not just its offsets) garbled the up-next card once already —
+            see the comment in `up-next-card.tsx`.
 
----
+**Phase 3 is complete.**
 
 ---
 

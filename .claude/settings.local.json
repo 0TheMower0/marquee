@@ -4,7 +4,12 @@
       "PowerShell(npm *)",
       "Bash(npm install *)",
       "Bash(npx vitest *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(netstat -ano)",
+      "Bash(disown)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000)",
+      "Bash(curl *)"
     ]
   }
 }
