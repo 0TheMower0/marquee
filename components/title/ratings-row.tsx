@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import type { ExternalRating, RatingScale, RatingSource } from "@/lib/content/types";
 import { cn } from "@/lib/utils/cn";
 
@@ -27,6 +29,14 @@ import { cn } from "@/lib/utils/cn";
  * green are load-bearing recognition cues. Re-tinting them all to one
  * extracted colour would make the row prettier and useless. The TMDB entry
  * does use `text-accent`, since TMDB is "this app's own" score.
+ *
+ * ## Phase 4 Step 5: a sixth slot, "YOU"
+ *
+ * `MyRatingChip` renders as an optional trailing `<li>` via `children` — see
+ * that component for why it's solid `bg-accent` rather than bordered like the
+ * read-only sources, and `components/title/my-rating-section.tsx` for the
+ * actual editing control, which is a separate, more spacious section further
+ * down the page rather than squeezed into this chip.
  */
 
 /** Typographic marks, not the official logo files. Rendering brand wordmarks
@@ -135,10 +145,19 @@ function RatingChip({ rating }: { rating: ExternalRating }) {
 export function RatingsRow({
   tmdbRating,
   external,
+  children,
 }: {
   /** TMDB's own community score, 0–10. Null when TMDB has none. */
   tmdbRating: number | null;
   external: ExternalRating[];
+  /**
+   * Phase 4 Step 5: the "YOU" chip (`MyRatingChip`), rendered as one more
+   * `<li>` after the read-only sources. Passed in as a slot rather than
+   * this Server Component reaching for `useTracking()`/`useRatings()`
+   * itself — those are client contexts, and `MyRatingChip` is the one small
+   * Client Component this row needs, not the whole row.
+   */
+  children?: ReactNode;
 }) {
   const all: ExternalRating[] = [
     ...(tmdbRating !== null
@@ -147,9 +166,21 @@ export function RatingsRow({
     ...external,
   ];
 
-  // Nothing at all to show — no TMDB score AND no external ones. Renders
-  // nothing rather than an empty heading, same as every other optional
-  // section on this page.
+  // Gated on `all.length` ONLY, deliberately not on whether `children` will
+  // render anything. This is a Server Component: `children` is a React
+  // element reference passed down from the page, and it is truthy the
+  // instant the caller writes `<MyRatingChip />` — regardless of whether
+  // MyRatingChip itself decides (client-side, from state this component
+  // cannot see) to render null. There is no way to ask "will my child
+  // render something" from here.
+  //
+  // The accepted, narrow consequence: a title with no TMDB score AND no
+  // external ratings won't show this section at all, even if the user has
+  // rated it — their rating still exists and is still editable in
+  // `MyRatingSection` further down the page, just not echoed here too.
+  // TMDB assigns a score to nearly everything with any votes, so this only
+  // bites genuinely obscure or unreleased titles. Accepted rather than
+  // threading client readiness into a server-rendered gate for it.
   if (all.length === 0) return null;
 
   return (
@@ -161,6 +192,7 @@ export function RatingsRow({
         {all.map((rating) => (
           <RatingChip key={rating.source} rating={rating} />
         ))}
+        {children}
       </ul>
     </section>
   );

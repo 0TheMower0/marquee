@@ -5,6 +5,7 @@ import "./globals.css";
 import { BottomNav } from "@/components/shell/bottom-nav";
 import { Footer } from "@/components/shell/footer";
 import { Sidebar } from "@/components/shell/sidebar";
+import { RatingsProvider } from "@/lib/ratings";
 import { TrackingProvider } from "@/lib/tracking";
 
 /**
@@ -79,8 +80,13 @@ export default function RootLayout({
             {/* Scoped to <main> rather than the whole body: everything that
                 reads tracking state today (TicketCard, the title detail page,
                 My Library) renders inside it. Move this outward if Sidebar or
-                BottomNav ever need it too (e.g. a library item count). */}
-            <TrackingProvider>{children}</TrackingProvider>
+                BottomNav ever need it too (e.g. a library item count).
+                RatingsProvider nests inside for the same reason — its only
+                readers (the title detail page, My Library's rated filter)
+                are both inside <main> too. */}
+            <TrackingProvider>
+              <RatingsProvider>{children}</RatingsProvider>
+            </TrackingProvider>
           </main>
           <Footer />
         </div>

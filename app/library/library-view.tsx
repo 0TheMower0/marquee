@@ -1,13 +1,17 @@
 "use client";
 
+import { useState, type ReactNode } from "react";
+
 import { ContinueWatchingSection } from "@/components/tracking/continue-watching-section";
 import { TitleGrid } from "@/components/title/title-grid";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SearchIcon } from "@/components/ui/icons";
 import { SkeletonGrid } from "@/components/ui/skeleton";
+import { useRatings } from "@/lib/ratings";
 import { useTracking } from "@/lib/tracking";
 import type { TrackingEntry, TrackingStatus } from "@/lib/tracking";
+import { cn } from "@/lib/utils/cn";
 
 /**
  * Watchlist and Watched are plain status grids. "Watching" isn't listed
@@ -35,32 +39,91 @@ const SECTIONS: {
   },
 ];
 
+type WatchedFilter = "all" | "rated";
+
+/**
+ * Two-way toggle, styled like TrackingActions' status buttons rather than
+ * introducing a new control shape for one binary choice.
+ */
+function RatedFilterToggle({
+  value,
+  onChange,
+}: {
+  value: WatchedFilter;
+  onChange: (value: WatchedFilter) => void;
+}) {
+  const options: { value: WatchedFilter; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "rated", label: "Rated" },
+  ];
+
+  return (
+    <div role="group" aria-label="Filter watched titles" className="flex gap-1.5">
+      {options.map((option) => {
+        const active = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(option.value)}
+            className={cn(
+              "font-display rounded-sm border px-2.5 py-1 text-display-sm uppercase transition-colors",
+              active
+                ? "bg-accent text-on-accent border-transparent"
+                : "bg-transparent text-fg-muted border-line hover:bg-overlay hover:text-fg",
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function StatusSection({
   section,
   allEntries,
+  filter,
+  filterControl,
+  emptyOverride,
 }: {
   section: (typeof SECTIONS)[number];
   allEntries: TrackingEntry[];
+  /** Optional additional predicate, applied after the status filter. Used by
+   *  the Watched section for the "Rated" toggle — Watchlist has none. */
+  filter?: (entry: TrackingEntry) => boolean;
+  /** Rendered beside the heading. Only the Watched section has one. */
+  filterControl?: ReactNode;
+  /** Overrides the section's default empty-state copy — used when a FILTER,
+   *  not the underlying data, is why nothing is showing ("no rated titles"
+   *  reads very differently from "nothing watched yet"). */
+  emptyOverride?: { title: string; body: string };
 }) {
   const items = allEntries
     .filter((entry) => entry.status === section.status)
+    .filter((entry) => (filter ? filter(entry) : true))
     .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
     .map((entry) => entry.summary);
 
   return (
     <section aria-labelledby={`${section.status}-heading`}>
-      <h2
-        id={`${section.status}-heading`}
-        className="font-display text-display-md text-fg uppercase"
-      >
-        {section.label}
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2
+          id={`${section.status}-heading`}
+          className="font-display text-display-md text-fg uppercase"
+        >
+          {section.label}
+        </h2>
+        {filterControl}
+      </div>
 
       {items.length === 0 ? (
         <EmptyState
           icon={<SearchIcon />}
-          title={section.emptyTitle}
-          body={section.emptyBody}
+          title={emptyOverride?.title ?? section.emptyTitle}
+          body={emptyOverride?.body ?? section.emptyBody}
           className="py-8"
           action={
             <Button href="/search" variant="outline" size="sm">
@@ -83,12 +146,21 @@ function StatusSection({
  */
 export function LibraryView() {
   const { ready, entries } = useTracking();
+  // Ratings hydrates independently and does NOT gate the page — it's a local
+  // read that resolves within a tick, same reasoning as `ready` itself. Until
+  // it resolves, the Watched section simply renders unfiltered (`filter`
+  // stays undefined below) rather than waiting on a second readiness flag.
+  const { ready: ratingsReady, getEntry: getRatingEntry } = useRatings();
+  const [watchedFilter, setWatchedFilter] = useState<WatchedFilter>("all");
 
   if (!ready) {
     return <SkeletonGrid count={5} label="Loading your library" className="p-6 sm:p-8" />;
   }
 
   const all = Object.values(entries);
+
+  const isRated = (entry: TrackingEntry) =>
+    (getRatingEntry(entry.id, entry.mediaType)?.score ?? null) !== null;
 
   return (
     <div className="space-y-10 p-6 sm:p-8">
@@ -104,7 +176,24 @@ export function LibraryView() {
         <ContinueWatchingSection />
       </section>
 
-      <StatusSection section={SECTIONS[1]} allEntries={all} />
+      <StatusSection
+        section={SECTIONS[1]}
+        allEntries={all}
+        filter={ratingsReady && watchedFilter === "rated" ? isRated : undefined}
+        filterControl={
+          ratingsReady ? (
+            <RatedFilterToggle value={watchedFilter} onChange={setWatchedFilter} />
+          ) : undefined
+        }
+        emptyOverride={
+          watchedFilter === "rated"
+            ? {
+                title: "No rated titles yet",
+                body: "Rate a watched title from its detail page and it'll show up here.",
+              }
+            : undefined
+        }
+      />
     </div>
   );
 }

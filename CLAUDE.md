@@ -1097,8 +1097,8 @@ w500 changes mean chroma by <0.001, so no resample-kernel tuning is warranted.
 | 1 *(done)* | Foundation: content abstraction + both providers, design system, app shell, Home, detail page |
 | 2 *(done)* | Search, My Library, watchlist/watched state |
 | 3 *(done)* | Episode-level progress, "Up Next" engine |
-| **4** *(current)* | Rich detail pages with artwork-derived dynamic theming |
-| 5 | XP, levels, streaks, badges; PWA manifest + service worker |
+| 4 *(done)* | Rich detail pages with artwork-derived dynamic theming |
+| **5** *(current)* | XP, levels, streaks, badges; PWA manifest + service worker |
 | 6 | Supabase accounts, spoiler-safe comments, shared lists |
 | 7 | CSV importers (Trakt/Letterboxd/TV Time), new-episode notifications |
 | 8 | Year in Review |
@@ -1311,6 +1311,66 @@ do not implement them early.
         whole value of five sources is telling them apart. Metacritic uses its
         real green/yellow/red score bands, which is both authentic and avoids
         its brand yellow colliding with IMDb's near-identical one.
+- [x] **Step 5** — A user's own 0–100 rating and private notes, on any title
+      marked "watched". `lib/ratings/` — a SEPARATE store from
+      `lib/tracking/`, not a field on `TrackingEntry`: different access
+      pattern (edited rarely, via a dedicated control) and a different
+      versioning lifecycle, same reasoning CLAUDE.md already gives for
+      keeping watch dates out of episode-progress data. `score` and `note`
+      are independent — a title can have one without the other — and if a
+      patch leaves BOTH empty the record is deleted rather than persisted as
+      an empty husk (`mergeRatingPatch` in `lib/ratings/types.ts`, a pure
+      function with its own test file, 20 tests). Version 1, no migrations
+      yet — same "must never be deleted once written" discipline as
+      `trackingStore`.
+      - **The slider is a native `<input type="range">`**, not hand-rolled —
+        "must work well with a thumb on mobile" is most of what native
+        range inputs already are, and a custom pointer-tracking
+        implementation would just reimplement years of browser touch tuning
+        worse. `accent-accent` themes the native thumb/track to the Step 2
+        per-title accent for free.
+      - **Commit strategy, and why**: React's `onChange` for a range input
+        fires on the native `input` event — continuously, on every pixel of
+        drag — not on `change`, which only fires once on release. Relying on
+        that distinction would write to storage on every intermediate value.
+        So `onChange` only updates LOCAL state; the actual commit is wired to
+        `onPointerUp` (mouse AND touch — Pointer Events unify them) and
+        `onKeyUp` (arrow-key adjustment), with `onBlur` as a safety net. A ref
+        tracks the last-committed value so blur-after-pointerup doesn't
+        double-write. See the doc comment in `rating-slider.tsx` before
+        "simplifying" this to a plain `onChange` — that reintroduces the
+        write-per-pixel problem.
+      - **Notes autosave**: debounced (800ms) while typing, flushed
+        immediately on blur. No Save button — nothing else that mutates
+        tracking/rating state in this app has one, and this would be the odd
+        one out. The one accepted gap: closing the tab mid-debounce with no
+        blur loses the last unsaved keystrokes, the same tradeoff already
+        made for search debouncing.
+      - **"YOU" in the ratings row and the editing control are deliberately
+        two separate components** (`MyRatingChip`, `MyRatingSection`)
+        reading the SAME `useRatings()` context rather than one owning the
+        other's state — they can't disagree, and the editing control isn't
+        squeezed into a chip. Both gate independently on `useTracking()`'s
+        status being `"watched"`; showing a rating control for something you
+        haven't watched isn't a control this app offers.
+      - **A real bug, caught only by looking at the rendered page**: Bebas
+        Neue's em-dash glyph renders almost invisibly at `text-display-2xl`
+        — confirmed via `getBoundingClientRect` (a real 40×80px box) with
+        nothing visibly inside it. Lint, types, and build all passed with it
+        in place. `font-display` is documented above as valid for
+        titles/nav/headers, not arbitrary punctuation, and this is exactly
+        that failure mode. Fixed by rendering "Not rated" in `font-sans` body
+        text instead of a lone "—" in the display face — see the comment in
+        `rating-slider.tsx`. Don't put a bare symbol into `text-display-*`
+        without checking it renders.
+      - **My Library's "Rated" filter** lives only on the Watched section
+        (`app/library/library-view.tsx`) — rating requires "watched", so
+        Watchlist has no toggle. Switching to "Rated" swaps the empty-state
+        copy too ("No rated titles yet" vs "Nothing watched yet"), because
+        those are genuinely different situations and showing the wrong one
+        would misdirect the user.
+
+**Phase 4 is complete.**
 
 ---
 

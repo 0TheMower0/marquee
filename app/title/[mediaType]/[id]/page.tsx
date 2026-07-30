@@ -5,6 +5,8 @@ import { Suspense } from "react";
 import { ContentErrorState } from "@/components/content/content-error-state";
 import { BackdropImage } from "@/components/title/backdrop-image";
 import { CastCrewSection } from "@/components/title/cast-crew-section";
+import { MyRatingChip } from "@/components/title/my-rating-chip";
+import { MyRatingSection } from "@/components/title/my-rating-section";
 import { PosterImage } from "@/components/title/poster-image";
 import { RatingsRow, RatingsRowSkeleton } from "@/components/title/ratings-row";
 import { WatchProvidersSection } from "@/components/title/watch-providers-section";
@@ -142,7 +144,11 @@ async function RatingsSection({
     // Intentionally swallowed — see above.
   }
 
-  return <RatingsRow tmdbRating={tmdbRating} external={external} />;
+  return (
+    <RatingsRow tmdbRating={tmdbRating} external={external}>
+      <MyRatingChip id={id} mediaType={mediaType} />
+    </RatingsRow>
+  );
 }
 
 export default async function TitleDetailPage({
@@ -336,6 +342,13 @@ export default async function TitleDetailPage({
         <section aria-label="Track this title" className="mt-8">
           <TrackingActions title={title} />
         </section>
+
+        {/* Phase 4 Step 5. Gates itself on "watched" internally and renders
+            nothing otherwise — placed right after TrackingActions so rating
+            a title reads as the natural next step after marking it watched. */}
+        <div className="mt-8">
+          <MyRatingSection id={id} mediaType={mediaType} />
+        </div>
 
         {mediaType === "tv" ? (
           // Tabbed for TV: Overview alongside a Seasons tab, which is where
