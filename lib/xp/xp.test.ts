@@ -208,18 +208,37 @@ describe("levelForXp", () => {
   });
 });
 
-describe("the Phase 7 import scenario — why the exponent is 2.0", () => {
-  it("a ~2,000-episode import does not exceed the top rank", () => {
+describe("the Phase 7 import scenario — why the exponent is 2.2", () => {
+  it("a modest 2,000-episode import does not exceed the top rank", () => {
     const imported = computeXp({
       episodesWatched: 2000,
-      movieRuntimeMinutesTotal: 200 * 110, // ~200 movies at a typical runtime
+      movieRuntimeMinutesTotal: 200 * 110,
       completedSeasons: 0,
       completedSeries: 0,
     });
-    const level = levelForXp(imported.total);
-    // Top rank starts at level 71 (see RANKS in levels.ts) — a heavy import
-    // should land comfortably below it, leaving room to grow.
-    expect(level).toBeLessThan(71);
+    expect(levelForXp(imported.total)).toBeLessThan(71);
+  });
+
+  it("a REALISTIC heavy importer lands well below the top rank, not one level short of it", () => {
+    // This is the case that actually forced the exponent from 2.0 to 2.2: a
+    // modest import (above) was never the risk — a genuinely heavy Trakt/TV
+    // Time library is. 3,000 episodes + 500 movies is a realistic profile
+    // for someone who would actually use a CSV import feature, not a
+    // contrived extreme. At exponent 2.0 this landed at level 69, one level
+    // short of "Marquee Legend" (71+) — maxed out for all practical
+    // purposes on day one. The bound below is deliberately generous
+    // (< 60, not just < 71): "one level short of the ceiling" would still
+    // technically satisfy `< 71` while being exactly the failure this test
+    // exists to catch.
+    const heavyImport = computeXp({
+      episodesWatched: 3000,
+      movieRuntimeMinutesTotal: 500 * 100,
+      completedSeasons: 0,
+      completedSeries: 0,
+    });
+    const level = levelForXp(heavyImport.total);
+    expect(level).toBeLessThan(60);
+    expect(level).toBeGreaterThan(20); // still a large, real jump — not flattened to nothing
   });
 });
 

@@ -1530,16 +1530,27 @@ do not implement them early.
         NOT retroactively enumerated for it — doing so would need a season
         fetch for every finished show just to count them, real cost for what
         was asked for as a "small bonus."
-      - **The level curve's exponent is 2.0, not the 1.7 first proposed** —
-        raised specifically because `xpForLevel(2) = BASE * 1^x = BASE` for
-        ANY exponent, so the change reshapes only the late curve while
-        leaving "level 2 within the first session" untouched. Motivated by a
-        concrete Phase 7 scenario: a large CSV-imported history at the
-        original exponent could land past the top of the entire rank ladder
-        on day one, cheapening "Marquee Legend" for both the importer and
-        anyone who reached it the slow way. Verified as a named test case
-        (`lib/xp/xp.test.ts`, "the Phase 7 import scenario") — ~2,000
-        imported episodes now lands around level 53, not maxed at 71+.
+      - **The level curve's exponent is 2.2, tuned across two rounds of the
+        same Phase 7 import pressure-test, each against a bigger scenario
+        than the last.** `xpForLevel(2) = BASE * 1^x = BASE` for ANY
+        exponent, so the exponent reshapes only the late curve while leaving
+        "level 2 within the first session" untouched — level 3 barely moves
+        either. Round 1 (1.7 → 2.0): a modest 2,000-episode CSV import at
+        1.7 landed past level 100 — past the entire rank ladder on day one.
+        2.0 fixed that specific case. Round 2 (2.0 → 2.2): 2.0 was
+        pressure-tested against too small a scenario. A REALISTIC heavy
+        importer — the profile actually likely to use a CSV import feature,
+        not a contrived extreme — is closer to 3,000 episodes + 500 movies
+        (~370,000 XP), and at 2.0 that landed at level 69: one level short of
+        "Marquee Legend" (71+), still maxed out for practical purposes. 2.2
+        puts the same scenario at level 47 (Critic) — real headroom left.
+        Stopped there rather than pushing to 2.4 (which would put it at
+        level 34): that starts undervaluing a genuinely large REAL library,
+        and the same curve governs an organic multi-year user, not just
+        importers. Both scenarios are named test cases in
+        `lib/xp/xp.test.ts`, "the Phase 7 import scenario" — retune this
+        constant again if either ever proves wrong in practice; the tests
+        will say which.
       - **Ranks**: Ticket Holder → Matinee Regular → Aisle Seat Veteran →
         Repertory Regular → Film Buff → Cinephile → Projectionist → Archivist
         → Critic → Auteur → Festival Programmer → Marquee Legend (71+, open-

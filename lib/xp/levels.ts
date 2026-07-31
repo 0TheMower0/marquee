@@ -4,27 +4,47 @@
  * two constants with no migration and no UI change.
  *
  * ============================================================================
- * WHY THE EXPONENT IS 2.0, NOT SOMETHING ROUNDER
+ * WHY THE EXPONENT IS 2.2, NOT SOMETHING ROUNDER
  * ============================================================================
  * `xpForLevel(2) = LEVEL_BASE_XP * (2-1) ^ EXPONENT = LEVEL_BASE_XP`, for ANY
  * exponent — `1 ^ x` is 1 regardless of `x`. That is deliberate and load-
  * bearing: it means the exponent can be tuned freely to reshape the LATE
  * curve without ever disturbing the level-2 threshold, which is the one
  * number "generous early... level 2 within the first session" actually pins
- * down.
+ * down. Level 3 barely moves either (a few dozen XP either way) — this is a
+ * lever on the TAIL specifically.
  *
- * 2.0 specifically (not the 1.7 first proposed) exists because of a concrete
- * scenario: a Phase 7 CSV import could hand a long-time user thousands of
- * episodes of pre-existing history in one sitting. At 1.7, ~2,000 imported
- * episodes (~220,000 XP) landed at level ~106 — past the top of the entire
- * rank ladder on day one, which would cheapen "Marquee Legend" for both the
- * importer and anyone who reached it the slow way. At 2.0 the same import
- * lands around level 53 (Auteur) — real headroom left, while level 2 is
- * untouched and levels 3-5 barely move (a few dozen XP).
+ * This went through two revisions before landing here, each forced by
+ * pressure-testing against a bigger Phase 7 CSV-import scenario than the one
+ * before it:
+ *
+ *   exponent 1.7 (first proposed): a modest 2,000-episode import already
+ *     landed past level 100 — past the entire rank ladder on day one.
+ *
+ *   exponent 2.0 (shipped, briefly): fixed that specific case (2,000
+ *     episodes -> level ~53), but was pressure-tested against too small a
+ *     scenario. A REALISTIC heavy importer — the profile actually likely to
+ *     use a CSV import feature, not a contrived extreme — is closer to
+ *     3,000 episodes + 500 movies (~370,000 XP). At 2.0 that lands at level
+ *     69: one level short of "Marquee Legend" (71+). Still maxes out almost
+ *     immediately for the realistic case, not just an edge case.
+ *
+ *   exponent 2.2 (here): the same 370,000 XP scenario lands at level 47
+ *     (Critic) — real headroom before Auteur/Festival Programmer/Legend.
+ *     Chosen over pushing further (2.4 puts the same scenario at level 34,
+ *     Archivist) because that starts undervaluing a genuinely large real
+ *     library — 3,000 actually-watched episodes is a lot, and the same curve
+ *     applies to an organic multi-year user, not just an importer. 2.2 is
+ *     the point where import-day inflation and long-term-user reward felt
+ *     balanced, not a value derived from a formula.
+ *
+ * See "the Phase 7 import scenario" in xp.test.ts, which pins the 370,000-XP
+ * case below the top rank — retune this constant again if that ever proves
+ * too easy or too hard in practice, the test will say which.
  */
 
 export const LEVEL_BASE_XP = 80;
-export const LEVEL_EXPONENT = 2.0;
+export const LEVEL_EXPONENT = 2.2;
 
 /** Sanity ceiling for the search in `levelForXp` — not a gameplay cap.
  *  `xpForLevel` grows without bound, so this only guards against a
