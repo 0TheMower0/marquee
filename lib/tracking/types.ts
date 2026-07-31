@@ -93,14 +93,38 @@ interface TrackingEntryBase {
   summary: TitleSummary;
 }
 
-/** Movies keep the v1 shape exactly — there is nothing finer to track. */
+/**
+ * Movies keep the v1 shape plus one addition (Phase 5 Step 2): `runtimeMinutes`,
+ * captured from the full `Title` at the moment `setStatus` is called — see the
+ * `hint` parameter in context.tsx. `summary` (a `TitleSummary`) deliberately
+ * has no runtime field of its own, so this is the one place a movie entry
+ * knows its own length. It exists SOLELY so lib/xp can scale XP by runtime
+ * without a provider fetch at Profile-render time; nothing else should read
+ * it. `null` on records written before this field existed, or when the hint
+ * was unavailable — an honest gap, not a fabricated runtime. lib/xp falls
+ * back to a flat default in that case.
+ */
 export interface MovieTrackingEntry extends TrackingEntryBase {
   mediaType: "movie";
+  runtimeMinutes: number | null;
 }
 
+/**
+ * `knownEpisodeCount` (Phase 5 Step 2) is an XP-only fallback, captured the
+ * same way as `runtimeMinutes` above. It exists for exactly one situation:
+ * a show marked "watched" through the coarse status button, where
+ * `watchedEpisodes` is empty and there is no other way to know how many
+ * episodes to award XP for. Anywhere `watchedEpisodes` has real ranges,
+ * `countRanges` is exact and this field is ignored — it is NOT a cache of
+ * season structure and must never be used for progress math. That
+ * distinction matters: CLAUDE.md is explicit that season structure is
+ * deliberately not stored on the entry, and this field does not violate that
+ * — it is a single scalar snapshot for one XP edge case, not season data.
+ */
 export interface TvTrackingEntry extends TrackingEntryBase {
   mediaType: "tv";
   watchedEpisodes: WatchedEpisodes;
+  knownEpisodeCount: number | null;
 }
 
 /**

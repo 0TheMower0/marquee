@@ -20,6 +20,7 @@ import {
   markSeasonUpTo,
   markWatchedUpTo,
   reconcileCoarseWatched,
+  totalEpisodeCount,
   unmarkEpisode,
   unmarkSeason,
 } from "./progress";
@@ -50,8 +51,22 @@ interface TrackingContextValue {
    * with `StorageError` after rolling the optimistic change back if the
    * write failed. Callers should catch this and show the user something —
    * see `components/tracking/*` for the pattern.
+   *
+   * `hint` (Phase 5 Step 2) captures the two XP-only fallback fields —
+   * `runtimeMinutes` (movie) / `episodeCount` (tv) — from a full `Title`
+   * the caller happens to have in hand. Only `TrackingActions` ever passes
+   * one, because it is the only caller with a full `Title` rather than a
+   * `TitleSummary`; `TrackingBadge`'s watchlist-only toggle omits it and the
+   * existing value (or `null` for a new entry) is carried over unchanged,
+   * same as `watchedEpisodes` below. See the doc comments on
+   * `MovieTrackingEntry.runtimeMinutes` / `TvTrackingEntry.knownEpisodeCount`
+   * in ./types.ts for why this exists at all.
    */
-  setStatus: (summary: TitleSummary, status: TrackingStatus) => Promise<void>;
+  setStatus: (
+    summary: TitleSummary,
+    status: TrackingStatus,
+    hint?: { runtimeMinutes: number | null; episodeCount: number | null },
+  ) => Promise<void>;
   remove: (id: string, mediaType: MediaType) => Promise<void>;
 
   /**
@@ -141,7 +156,11 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
   // the same time — a real limitation, and out of scope for Phase 2, which
   // has no mutation queue. Each caller also disables its own control while
   // pending, so the common case (one click, one in-flight write) is exact.
-  async function setStatus(summary: TitleSummary, status: TrackingStatus) {
+  async function setStatus(
+    summary: TitleSummary,
+    status: TrackingStatus,
+    hint?: { runtimeMinutes: number | null; episodeCount: number | null },
+  ) {
     const key = entryKey(summary.mediaType, summary.id);
     const previous = entries;
     const existing = previous[key];
@@ -166,8 +185,24 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
             // would be silent data loss.
             watchedEpisodes:
               existing?.mediaType === "tv" ? existing.watchedEpisodes : {},
+            // Phase 5 Step 2, XP-only — see the note on `hint` above.
+            knownEpisodeCount:
+              hint !== undefined
+                ? hint.episodeCount
+                : existing?.mediaType === "tv"
+                  ? existing.knownEpisodeCount
+                  : null,
           }
-        : { ...base, mediaType: "movie" };
+        : {
+            ...base,
+            mediaType: "movie",
+            runtimeMinutes:
+              hint !== undefined
+                ? hint.runtimeMinutes
+                : existing?.mediaType === "movie"
+                  ? existing.runtimeMinutes
+                  : null,
+          };
 
     setEntries({ ...previous, [key]: next });
 
@@ -249,6 +284,14 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
       updatedAt: now,
       summary,
       watchedEpisodes: nextWatched,
+      // Phase 5 Step 2, XP-only. Unlike setStatus's `hint` (which only fires
+      // when a caller happens to pass one), this path always HAS real season
+      // data — `seasons` is a required parameter here — so it opportunistically
+      // keeps the fallback fresh rather than merely carrying over a stale
+      // value. Net effect: an entry only stays missing this once it's been
+      // through nothing but a coarse "Watched" click with no episode-level
+      // interaction at all.
+      knownEpisodeCount: totalEpisodeCount(seasons),
     };
 
     setEntries({ ...previous, [key]: next });

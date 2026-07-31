@@ -84,6 +84,48 @@ const migrateV1ToV2: Migration = (previous) => {
   return { ...v1, watchedEpisodes: {} satisfies WatchedEpisodes };
 };
 
+/**
+ * The v2 record shape, frozen for the same reason V1TrackingEntry is above —
+ * migration 4, whenever it arrives, needs to see exactly what migration 3 was
+ * handed.
+ */
+interface V2TrackingEntry {
+  id: string;
+  mediaType: "movie" | "tv";
+  status: TrackingStatus;
+  addedAt: Date;
+  updatedAt: Date;
+  summary: unknown;
+  watchedEpisodes?: WatchedEpisodes; // present on tv, absent on movie
+}
+
+/**
+ * v2 -> v3 (Phase 5 Step 2): movies gain `runtimeMinutes`, TV gains
+ * `knownEpisodeCount` — both XP-only fields, both fallbacks for data this
+ * migration cannot possibly have.
+ *
+ * Same constraint as the v1 -> v2 migration above and for the same reason: a
+ * `Migration` is pure and synchronous, so there is no way to ask a provider
+ * "how long was this movie" or "how many episodes did this show have" for a
+ * record written before either field existed. `null` here is not a
+ * placeholder that gets silently backfilled later — it IS the answer, read by
+ * lib/xp as "use the flat default for this one." Consistent with the
+ * watch-log's own no-backfill decision in Phase 5 Step 1: an honest gap beats
+ * a fabricated number.
+ */
+const migrateV2ToV3: Migration = (previous) => {
+  if (typeof previous !== "object" || previous === null) {
+    throw new Error("v2 tracking record is not an object");
+  }
+
+  const v2 = previous as V2TrackingEntry;
+
+  if (v2.mediaType === "movie") {
+    return { ...v2, runtimeMinutes: null };
+  }
+  return { ...v2, knownEpisodeCount: null };
+};
+
 function isEpisodeRange(value: unknown): value is EpisodeRange {
   return (
     Array.isArray(value) &&
@@ -108,6 +150,15 @@ function isWatchedEpisodes(value: unknown): value is WatchedEpisodes {
   });
 }
 
+/** Both are XP-only fallback fields — see the doc comments on
+ *  `MovieTrackingEntry.runtimeMinutes` / `TvTrackingEntry.knownEpisodeCount`
+ *  in ./types.ts. Absent-vs-null is not distinguished: a record from before
+ *  this field existed simply hasn't been migrated yet at read time, and after
+ *  migration the field is always present (possibly `null`). */
+function isOptionalPositiveInt(value: unknown): boolean {
+  return value === null || (typeof value === "number" && Number.isInteger(value) && value > 0);
+}
+
 function isTrackingEntry(data: unknown): data is TrackingEntry {
   if (typeof data !== "object" || data === null) return false;
   const e = data as Record<string, unknown>;
@@ -122,24 +173,28 @@ function isTrackingEntry(data: unknown): data is TrackingEntry {
 
   if (!baseValid) return false;
 
-  if (e.mediaType === "movie") return true;
-  if (e.mediaType === "tv") return isWatchedEpisodes(e.watchedEpisodes);
+  if (e.mediaType === "movie") return isOptionalPositiveInt(e.runtimeMinutes);
+  if (e.mediaType === "tv") {
+    return isWatchedEpisodes(e.watchedEpisodes) && isOptionalPositiveInt(e.knownEpisodeCount);
+  }
   return false;
 }
 
 /**
- * Version 2 — per-episode watched state for TV (Phase 3 Step 1).
+ * Version 3 — `runtimeMinutes` (movie) / `knownEpisodeCount` (tv), both
+ * XP-only fallback fields added in Phase 5 Step 2.
  *
  * Read the migration-design note under "Local persistence" in CLAUDE.md
  * before bumping this again. The short version: migrations run lazily, per
- * record, on read; `migrations[2]` above can never be deleted; and a
- * migration that throws leaves the original bytes untouched on disk.
+ * record, on read; `migrations[2]` and `migrations[3]` can never be deleted;
+ * and a migration that throws leaves the original bytes untouched on disk.
  */
 export const trackingStore = defineStore<TrackingEntry>({
   namespace: "tracking",
-  version: 2,
+  version: 3,
   migrations: {
     2: migrateV1ToV2,
+    3: migrateV2ToV3,
   },
   validate: isTrackingEntry,
 });

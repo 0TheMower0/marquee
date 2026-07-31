@@ -40,7 +40,17 @@ export function TrackingActions({ title }: { title: Title }) {
       if (current === status) {
         await remove(title.id, title.mediaType);
       } else {
-        await setStatus(toTrackingSummary(title), status);
+        // Phase 5 Step 2: this component holds a full `Title` — the ONLY
+        // caller of setStatus that does — so it's the one place able to
+        // capture the XP-only fallback fields. Passed every time, even when
+        // both are null (a movie with no known runtime, say): a fresh `null`
+        // from a live fetch is still more current than a stale carried-over
+        // value, and setStatus already carries the previous value forward on
+        // its own when a caller omits `hint` entirely (see TrackingBadge).
+        await setStatus(toTrackingSummary(title), status, {
+          runtimeMinutes: title.runtimeMinutes,
+          episodeCount: title.episodeCount,
+        });
       }
     } catch {
       setFailed(true);

@@ -769,8 +769,8 @@ lib/tracking/
                EpisodeRange, WatchedEpisodes, SeasonEpisodeCounts
   ranges.ts    pure inclusive-range primitives + the canonical invariant
   progress.ts  episode operations and derived queries — pure, no storage
-  store.ts     trackingStore — a lib/storage Store<TrackingEntry>, version 2,
-               with the v1 -> v2 migration
+  store.ts     trackingStore — a lib/storage Store<TrackingEntry>, version 3,
+               with the v1 -> v2 and v2 -> v3 migrations
   context.tsx  TrackingProvider + useTracking() — optimistic writes, rollback
   index.ts     public surface; import from here
 
@@ -1501,7 +1501,77 @@ do not implement them early.
       `applyEpisodeMutation` rather than six call sites. Ships the pure query
       functions (streaks, per-year, totals, hour/weekday buckets) with 64
       tests; **no UI** — that is Step 3.
-- [ ] **Step 2** — XP and levels
+- [x] **Step 2** — XP and levels (`lib/xp/`).
+      - **XP is computed, never stored** — `computeXp()` in `formula.ts` is a
+        pure function over already-resolved counts, so the whole curve can be
+        retuned with no migration. What DID need a small, deliberate schema
+        change (`trackingStore` v2 -> v3) is two XP-only fallback fields:
+        `MovieTrackingEntry.runtimeMinutes` and
+        `TvTrackingEntry.knownEpisodeCount`, captured for free from the full
+        `Title` that `TrackingActions` already has in hand at the moment
+        `setStatus` is called (see the `hint` parameter in
+        `lib/tracking/context.tsx`) — no new provider fetch, and no
+        contradiction of "season structure is not stored on the entry": these
+        are single scalars for one XP edge case, not cached season data. Old
+        records migrate to `null` — an honest gap, matching the watch log's
+        own no-backfill decision, not a fabricated number.
+      - **Episodes earn a flat rate; movies earn real per-title runtime.**
+        Accepted, deliberate asymmetry: true per-episode accuracy would mean
+        threading runtime into the watch log per event, which that log's own
+        design brief reserves for time-windowed figures, and precise
+        per-episode data fights the entire reason the range encoding exists.
+        The flat rate still delivers the case that matters — a 2-hour film
+        outscores a single episode by a wide margin.
+      - **Season-complete bonus is scoped to "watching" shows only** — the
+        one place in this codebase a `getSeasons()` fetch happens for XP, and
+        it's the same bounded, ref-guarded, cached-per-showId idiom Up Next
+        already uses (a third appearance of that pattern, not a new one). A
+        "watched" show earns the flat series bonus once; season bonuses are
+        NOT retroactively enumerated for it — doing so would need a season
+        fetch for every finished show just to count them, real cost for what
+        was asked for as a "small bonus."
+      - **The level curve's exponent is 2.0, not the 1.7 first proposed** —
+        raised specifically because `xpForLevel(2) = BASE * 1^x = BASE` for
+        ANY exponent, so the change reshapes only the late curve while
+        leaving "level 2 within the first session" untouched. Motivated by a
+        concrete Phase 7 scenario: a large CSV-imported history at the
+        original exponent could land past the top of the entire rank ladder
+        on day one, cheapening "Marquee Legend" for both the importer and
+        anyone who reached it the slow way. Verified as a named test case
+        (`lib/xp/xp.test.ts`, "the Phase 7 import scenario") — ~2,000
+        imported episodes now lands around level 53, not maxed at 71+.
+      - **Ranks**: Ticket Holder → Matinee Regular → Aisle Seat Veteran →
+        Repertory Regular → Film Buff → Cinephile → Projectionist → Archivist
+        → Critic → Auteur → Festival Programmer → Marquee Legend (71+, open-
+        ended top rank). See `RANKS` in `lib/xp/levels.ts`.
+      - **Level-up detection needs a persisted marker**, not just a `useRef`:
+        XP is recomputed fresh every render, so "did the level just increase"
+        can only be answered against a REMEMBERED prior value that survives a
+        reload. `lib/xp/store.ts` — one record, "highest level seen" — goes
+        through `defineStore` like everything else persisted in this app,
+        even for a single scalar, rather than touching `localStorage`
+        directly. The toast is a one-shot signal (`useXp()`'s
+        `justLeveledUp`), checked once per mount, and the new level is
+        persisted immediately so a reload mid-celebration can't re-fire it.
+      - Reduced motion needed no bespoke handling in the toast — `motion-safe:`
+        classes (matching `ProgressBar`'s existing idiom) plus the global
+        `@media (prefers-reduced-motion: reduce)` rule already in
+        `globals.css` both apply; content still appears instantly either way.
+      - **A real Rules-of-Hooks bug, caught before it ever ran**: the first
+        draft of `use-xp.ts` had an early `return` sitting between two hook
+        calls, gated on `ready`. That's invisible while `ready` starts and
+        stays false, and breaks the moment it flips true mid-lifetime — a new
+        hook call appearing at a position React didn't see on the previous
+        render. Caught by re-reading the hook's own control flow against the
+        Rules of Hooks before ever loading a browser, not by lint or the type
+        checker (neither flagged it). Fixed by moving every hook above any
+        conditional return and branching only on the RETURNED values.
+      - 46 new tests across `lib/xp/xp.test.ts` and `resolve.test.ts`
+        (formula, level curve, rank boundaries, the coarse-mark fallback
+        rule, season-completion math including the Season-0 exclusion).
+      - XP bar lives on `/profile` (`components/profile/`), reusing
+        `ProgressBar` from `lib/tracking` unmodified — "same visual, same
+        math" already covered this third use case with no new component.
 - [ ] **Step 3** — Streaks and badges UI
 - [ ] **Step 4** — PWA manifest + service worker
 

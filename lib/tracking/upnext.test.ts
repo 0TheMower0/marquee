@@ -50,6 +50,7 @@ function tvEntry(opts: {
     updatedAt,
     summary: summary(opts.id, opts.name ?? opts.id),
     watchedEpisodes: opts.watchedEpisodes ?? {},
+    knownEpisodeCount: null,
   };
 }
 
@@ -89,6 +90,7 @@ describe("selectUpNextCandidates", () => {
         addedAt: NOW,
         updatedAt: NOW,
         summary: summary("some-movie", "Some Movie"),
+        runtimeMinutes: null,
       },
     };
     const seasonsByShowId = {
