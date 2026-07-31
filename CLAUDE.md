@@ -264,7 +264,7 @@ A blank search query returns an empty page rather than a 400, because that is
 what `mockProvider` and `tmdbProvider` both do. The HTTP transport must not be
 the odd one out — that is the whole point of the interface.
 
-### These routes are a public surface — Phase 6 owes them rate limiting
+### These routes are a public surface — rate limiting is Phase 6 Step 2
 
 Once deployed, `app/api/content/*` is callable by anyone who finds the URL, not
 just by our own client code. There is **no rate limiting, no auth, and no
@@ -279,11 +279,22 @@ What already limits the blast radius:
 - Input validation caps `page` at 500 and `query` at 200 characters, so a
   single request can't ask for something unbounded.
 
-What is still missing, and belongs with Phase 6 (accounts/Supabase, where
-per-user identity finally exists): real per-IP or per-user rate limiting on
-these routes. Without it a determined caller can still burn our TMDB quota via
-cache-missing queries — a unique `?query=` string per request defeats every
-cache layer listed above. Do not treat the caching as a substitute.
+What is still missing is real **per-IP** rate limiting. Without it a determined
+caller can burn our TMDB quota via cache-missing queries — a unique `?query=`
+string per request defeats every cache layer listed above. Do not treat the
+caching as a substitute.
+
+**This is scheduled as Phase 6 Step 2, ahead of any Supabase or schema work,
+and it has no dependency on accounts.** An earlier version of this section filed
+it under "Phase 6, where per-user identity finally exists." That was wrong in
+the way that matters: **an attacker burning the quota will not be signed in**,
+so per-user limits do nothing against the actual threat. Per-IP is the control
+that protects the quota, it needs no identity at all, and it is the only thing
+standing between a deployed URL and the TMDB bill. Per-user limits are a
+worthwhile later refinement — better at catching one abusive *account* — but
+they are a complement to per-IP, never a replacement, and nothing waits on them.
+
+See `docs/phase-6-sync-design.md` §10 for the full Phase 6 step order.
 
 ---
 
@@ -757,7 +768,9 @@ round trip, not 13 — with the same no-lock caveat as the multi-tab gap below.
 
 Two tabs writing the same namespace will clobber each other — there is no
 `storage`-event listener and no merge. Acceptable while everything is
-device-local; revisit alongside Phase 6 accounts, where sync arrives anyway.
+device-local. **Scheduled for Phase 6 Step 5**, where sync makes it worse (two
+tabs would carry two independent outboxes) and therefore has to fix it: see
+`docs/phase-6-sync-design.md` §5.
 
 ---
 
@@ -1216,7 +1229,7 @@ w500 changes mean chroma by <0.001, so no resample-kernel tuning is warranted.
 | 3 *(done)* | Episode-level progress, "Up Next" engine |
 | 4 *(done)* | Rich detail pages with artwork-derived dynamic theming |
 | **5** *(current)* | XP, levels, streaks, badges, stats dashboard; PWA manifest + service worker |
-| 6 | Supabase accounts, spoiler-safe comments, shared lists |
+| 6 | API rate limiting, Supabase accounts + sync, spoiler-safe comments, shared lists — design in `docs/phase-6-sync-design.md` |
 | 7 | CSV importers (Trakt/Letterboxd/TV Time), new-episode notifications |
 | 8 | Year in Review |
 
@@ -1857,6 +1870,68 @@ do not implement them early.
         served `/`, `/profile`, and `/profile/stats` all at 200 with zero
         new errors in its log.
 - [ ] **Step 6** — PWA manifest + service worker
+
+## Phase 6 status
+
+Full design, with the reasoning behind every decision below, lives in
+**`docs/phase-6-sync-design.md`**. Read it before implementing any step here —
+several of these choices look arbitrary without it (especially why the episode
+range encoding is deliberately NOT preserved server-side).
+
+- [x] **Step 1** — Sync architecture design (`docs/phase-6-sync-design.md`).
+      Approved 2026-07-31. The load-bearing decisions:
+      - **Local-first, server-as-sync-fabric.** Local storage stays a complete,
+        self-sufficient replica and every UI read hits it — signed in or not.
+        The server is a convergence point, never the read path. The anonymous
+        tier is the degenerate case with one replica, which is why the
+        zero-config promise survives. Accepted cost, named explicitly: every
+        future feature works in both modes forever.
+      - **The `EpisodeRange` encoding does NOT survive into Postgres.** It is
+        exploded to one row per watched episode server-side and re-collapsed
+        via `normalizeRanges()` on pull. The encoding exists to beat a ~5 MB
+        browser budget that has no server equivalent; keeping it would make
+        episode progress a JSON blob, turning "phone marks S3E4, laptop marks
+        S3E5" into a whole-blob conflict where last-write-wins silently eats
+        one device's episode. As rows, that scenario is two inserts into two
+        primary keys and there is no conflict at all. The encoding is a client
+        storage representation, not a domain model.
+      - **Conflict granularity must match the granularity of the user's
+        action.** Per-record LWW on a client-set `client_updated_at` is
+        acceptable *because* every record is small enough that losing one costs
+        one tap. Two timestamp columns, deliberately: `updated_at` (server-set)
+        drives the pull cursor, `client_updated_at` (client-set) drives LWW —
+        using server time would mean a Monday offline edit loses to a Sunday
+        edit purely because it synced later.
+      - **RLS is not hardening, it is the only thing between the anon key and
+        every user's data.** A `public` table without RLS enabled is
+        world-readable through PostgREST. The doc spells out per-operation
+        policies for every table and the four failure modes, chief among them:
+        an UPDATE policy with `USING` but no `WITH CHECK` lets a user reassign
+        `user_id` and write into another account.
+      - **`watch_events.day_key` must never be derived server-side.** It is the
+        local calendar day frozen at write time; recomputing it from a
+        timestamp rewrites a user's streak history when they travel — the exact
+        bug `lib/watchlog/types.ts` exists to prevent.
+      - **First-login merge is additive-only, idempotent, and backed up
+        first.** Union and max semantics (not LWW) because it joins two
+        histories that were never connected; ships with a summary naming every
+        title whose status differed or whose notes were concatenated. Automatic
+        when either side is empty, confirmed when both are non-empty — that
+        prompt guards the wrong-account case, the one irreversible failure.
+      - **Three Phase 5 features needed zero sync design** — XP, streaks, and
+        badge conditions are all computed, never stored, so they recompute from
+        synced inputs automatically. Direct vindication of that discipline.
+- [ ] **Step 2** — Per-IP rate limiting on `app/api/content/*`. Deliberately
+      ahead of all Supabase work and with **no dependency on accounts** — see
+      the corrected reasoning in "These routes are a public surface" above.
+- [ ] **Step 3** — Supabase project, schema, RLS policies, and the two-account
+      verification that RLS actually holds
+- [ ] **Step 4** — Auth, plus the first-login merge: pre-merge backup, the
+      merge itself, and the post-merge summary
+- [ ] **Step 5** — Ongoing sync: outbox, pull cursor, conflict rules, multi-tab
+      coordination (which also closes the multi-tab clobbering gap documented
+      in the storage section)
+- [ ] **Step 6** — Spoiler-safe comments, shared lists
 
 ---
 
