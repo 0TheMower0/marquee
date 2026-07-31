@@ -310,12 +310,29 @@ create policy "<T>_delete_own" on <T>
 
 ### 3.2 The four things that actually go wrong
 
-**1. `UPDATE` with `USING` but no `WITH CHECK`.** This is the classic hole and
-it is not obvious. `USING` controls *which rows you may update*. `WITH CHECK`
-controls *what the row may look like afterwards*. With `USING` alone, a user can
-take their own row and **reassign `user_id` to someone else's account** — a
-write into another user's data, from a policy that looks correct. Both clauses,
-always, on every UPDATE policy.
+**1. `UPDATE` with a `WITH CHECK` broader than its `USING`.** `USING` controls
+*which rows you may update*; `WITH CHECK` controls *what the row may look like
+afterwards*. A `WITH CHECK (true)` — usually written to "just let updates
+through" — lets a user take their own row and **reassign `user_id` to someone
+else's account**, a write into another user's data from a policy that looks
+deliberate.
+
+> ⚠️ **Corrected 2026-08-01.** This item previously claimed the hole was
+> `USING` *without* `WITH CHECK`. **That is wrong**: Postgres defaults
+> `WITH CHECK` to the `USING` expression when omitted, so a USING-only UPDATE
+> policy blocks the hijack. Verified empirically against PostgreSQL 18 —
+> checks 10-12 in `supabase/tests/01_rls_adversarial.sql` demonstrate the
+> broken shape hijacking, the USING-only shape holding, and the masking
+> effect below. Write both clauses anyway: it makes intent reviewable and
+> stops a later accidental widening. Just not for the reason usually given.
+
+**1b. A restrictive `SELECT` policy masks a broken `WITH CHECK`.** Found while
+building the test, and the reason a hole can survive a hand-check: when an
+`UPDATE` references the table's columns, `SELECT` policies apply to the
+post-update row too. So attacking a genuinely broken table with the natural
+`... WHERE user_id = me` form is **blocked**, and only the unqualified
+`UPDATE ... SET user_id = <other>` exposes it. Real defence in depth, and a
+real trap — probe without a `WHERE` clause or you will certify a hole as safe.
 
 **2. Writing `for all` and assuming it covers everything.** It does — Postgres
 falls back to the `USING` expression for `WITH CHECK` when the latter is

@@ -1906,8 +1906,10 @@ range encoding is deliberately NOT preserved server-side).
         every user's data.** A `public` table without RLS enabled is
         world-readable through PostgREST. The doc spells out per-operation
         policies for every table and the four failure modes, chief among them:
-        an UPDATE policy with `USING` but no `WITH CHECK` lets a user reassign
-        `user_id` and write into another account.
+        an UPDATE policy whose `WITH CHECK` is broader than its `USING` lets a
+        user reassign `user_id` and write into another account. (Step 3
+        corrected this: the hole is a *broader* `WITH CHECK`, e.g. `(true)`,
+        NOT an omitted one — Postgres defaults `WITH CHECK` to `USING`.)
       - **`watch_events.day_key` must never be derived server-side.** It is the
         local calendar day frozen at write time; recomputing it from a
         timestamp rewrites a user's streak history when they travel — the exact
@@ -2009,8 +2011,74 @@ range encoding is deliberately NOT preserved server-side).
         live against the dev server: search allowed exactly 30 then 429'd,
         ratings exactly 15, per-rule buckets stayed independent, and the 429
         carried `retry-after: 43` with `no-store`.
-- [ ] **Step 3** — Supabase project, schema, RLS policies, and the two-account
-      verification that RLS actually holds
+- [x] **Step 3** — Supabase schema + RLS (`supabase/`). Schema only; no app
+      code reads these tables yet. See `supabase/README.md`.
+      - **Schema and RLS ship in ONE migration, deliberately.** The tempting
+        split is "0001 tables, 0002 policies". Postgres DDL is transactional,
+        so keeping them together means there is no instant — and no
+        partially-applied migration state — in which a table exists without
+        RLS. Split in two, anyone who applies only the first has published
+        every user's data through PostgREST to anyone holding the anon key.
+        A guard at the end re-checks `pg_tables` and aborts the migration if
+        any `public` table has RLS off, because forgetting `enable row level
+        security` otherwise produces no warning of any kind.
+      - **A wrong claim this project had been repeating, now corrected and
+        tested.** Earlier docs (and the Step 1 design doc) said an UPDATE
+        policy with `USING` but no `WITH CHECK` lets a user reassign `user_id`
+        into another account. **That is false.** Postgres defaults `WITH CHECK`
+        to the `USING` expression when omitted, so that shape is safe. The
+        actual hole is a `WITH CHECK` *broader* than `USING` — `(true)` being
+        the common real-world case. Found by building a negative control that
+        failed to reproduce the "vulnerability", then probing the three policy
+        shapes against live PostgreSQL 18 rather than trusting the claim.
+        Both clauses are still written explicitly everywhere: it keeps intent
+        reviewable and prevents a later accidental widening.
+      - **And a genuinely treacherous subtlety, check 12.** The *same* broken
+        table attacked with `... WHERE user_id = me` is BLOCKED, while the
+        unqualified `UPDATE ... SET user_id = <other>` succeeds. When an
+        UPDATE references the table's columns, SELECT policies also apply to
+        the post-update row, so a restrictive SELECT policy is real defence in
+        depth — but it **masks** a broken `WITH CHECK`. Probing this hole the
+        natural way certifies it as safe. Both forms are now pinned as tests.
+      - **The test attacks, it does not assert.** `supabase/tests/01_rls_adversarial.sql`
+        signs in as Alice (`set local role authenticated` +
+        `request.jwt.claims`, exactly how PostgREST presents a request) and
+        tries to read Bob's row by exact primary key, probe with
+        `where user_id <> me`, read his private notes and watch history,
+        update and delete his rows, forge an insert attributed to him, and
+        hijack ownership of her own row. 12 checks, all passing, exit code 0.
+        It runs in a transaction and rolls back, so it is safe against a live
+        project.
+      - Verified against a real PostgreSQL 18 instance, not reasoned about: a
+        throwaway cluster on port 55432 with a shim reproducing Supabase's
+        `auth` schema, `auth.uid()` and API roles. (Windows needed
+        `shared_buffers=1MB`/no background workers to get past
+        `could not reserve shared memory region ... error code 487`.)
+      - **`rating_notes` is the strictest table** and its policy set must never
+        be relaxed for sharing — that separation is the whole reason the table
+        exists (design doc §7).
+      - **Three credentials now, and the third is the dangerous one.**
+        `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are
+        public by design — the browser must authenticate with something, and
+        the anon key is safe **only because** RLS is on every table.
+        `SUPABASE_SERVICE_ROLE_KEY` carries **BYPASSRLS**: every policy in the
+        schema is simply not applied to it, so leaking it is total silent
+        access to every user's library, ratings, private notes and history —
+        strictly worse than leaking the TMDB or OMDb key, which cost a quota
+        and a rotation. It is read only through `lib/supabase/server-env.ts`
+        (`server-only`, lazy read), and no current code path needs it.
+      - **Verified with a sentinel and a POSITIVE CONTROL**, same discipline as
+        Phase 4 Step 4. A sentinel value in `SUPABASE_SERVICE_ROLE_KEY`
+        appeared **0 times** in `.next/static` *and* 0 times in `.next/server`
+        (the lazy read keeps it out of the compiled server output too), while
+        the anon-key sentinel WAS found in `.next/static` — which is what
+        proves the grep can detect strings that are present. The first attempt
+        at this control silently proved nothing because the sentinel routes
+        were placed in `app/_sentinel/`, and **a leading underscore makes a
+        folder private in the App Router**, so neither route was ever built.
+        Importing `server-env.ts` from a Client Component was then tried
+        deliberately: the build failed with `'server-only' cannot be imported
+        from a Client Component module` plus the full import trace.
 - [ ] **Step 4** — Auth, plus the first-login merge: pre-merge backup, the
       merge itself, and the post-merge summary
 - [ ] **Step 5** — Ongoing sync: outbox, pull cursor, conflict rules, multi-tab
