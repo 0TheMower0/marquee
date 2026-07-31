@@ -156,6 +156,15 @@ export function SkipToIcon(props: IconProps) {
   );
 }
 
+/** The streak indicator. */
+export function FlameIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 2.5c.6 3-2.7 4.4-2.7 7.7a2.7 2.7 0 0 0 5.4 0c1.2 1 1.8 2.4 1.8 3.8a4.5 4.5 0 0 1-9 0c0-4.5 4-5.4 4.5-11.5Z" />
+    </Icon>
+  );
+}
+
 export function SpinnerIcon(props: IconProps) {
   return (
     <Icon {...props}>

@@ -117,6 +117,26 @@ export function shiftDay(key: DayKey, deltaDays: number): DayKey {
 export const previousDay = (key: DayKey): DayKey => shiftDay(key, -1);
 export const nextDay = (key: DayKey): DayKey => shiftDay(key, 1);
 
+/**
+ * Whole calendar days from `from` to `to` (positive if `to` is later).
+ *
+ * Anchored through `Date.UTC` on purpose, even though day keys are local
+ * dates — that is what makes this DST-safe. Constructing two LOCAL dates and
+ * subtracting milliseconds would be off by one across a spring-forward or
+ * fall-back boundary (a 23- or 25-hour day is not 86,400,000ms). `Date.UTC`
+ * has no DST at all, and both sides go through the identical Y/M/D -> UTC
+ * conversion, so the local offset cancels out of the subtraction rather than
+ * corrupting it.
+ */
+export function dayDifference(from: DayKey, to: DayKey): number {
+  const a = DAY_KEY_PATTERN.exec(from);
+  const b = DAY_KEY_PATTERN.exec(to);
+  if (!a || !b) return NaN;
+  const fromUtc = Date.UTC(Number(a[1]), Number(a[2]) - 1, Number(a[3]));
+  const toUtc = Date.UTC(Number(b[1]), Number(b[2]) - 1, Number(b[3]));
+  return Math.round((toUtc - fromUtc) / 86_400_000);
+}
+
 /** The 4-digit year portion. Year-in-Review filters on this via the key
  *  alone, without reading a single record's value. */
 export function yearOf(key: DayKey): string {

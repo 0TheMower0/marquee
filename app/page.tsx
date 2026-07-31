@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 
 import { ContentErrorState } from "@/components/content/content-error-state";
+import { StreakBadge } from "@/components/streak/streak-badge";
 import { TitleGrid } from "@/components/title/title-grid";
 import { UpNextRail } from "@/components/tracking/up-next-rail";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -60,14 +61,21 @@ async function TrendingGrid() {
 export default function HomePage() {
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <header>
-        <h1 className="font-display text-display-xl text-fg uppercase">
-          Trending now
-        </h1>
-        <p className="text-body text-fg-muted mt-1 max-w-prose">
-          Films and series people are watching this week — in one place, not two
-          apps.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="font-display text-display-xl text-fg uppercase">
+            Trending now
+          </h1>
+          <p className="text-body text-fg-muted mt-1 max-w-prose">
+            Films and series people are watching this week — in one place, not
+            two apps.
+          </p>
+        </div>
+
+        {/* Client-rendered for the same reason UpNextRail below is — tracking
+            data only exists in this browser's storage. Renders null when
+            there's no active streak, so Home is unchanged for a new user. */}
+        <StreakBadge />
       </header>
 
       {/* Client-rendered — tracking data lives only in this browser's

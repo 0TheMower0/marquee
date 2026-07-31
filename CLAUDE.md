@@ -1583,7 +1583,90 @@ do not implement them early.
       - XP bar lives on `/profile` (`components/profile/`), reusing
         `ProgressBar` from `lib/tracking` unmodified — "same visual, same
         math" already covered this third use case with no new component.
-- [ ] **Step 3** — Streaks and badges UI
+- [x] **Step 3** — Streaks (`lib/watchlog/streaks.ts`). Badges are not part of
+      this step — split out of the original "Streaks and badges UI" line;
+      badges remain unscheduled.
+      - **Freezes are computed, never stored** — same discipline as XP.
+        `computeStreakStatus()` re-derives `currentStreak`, `longestStreak`,
+        and `freezesAvailable` from nothing but the log's day keys (the same
+        `keys()`-only read `currentStreak`/`longestStreak` in `queries.ts`
+        already used), every time it's called. No new persistence exists for
+        this feature at all.
+      - **The mechanic**: 1 freeze banked per `FREEZE_EARN_INTERVAL_DAYS` (7)
+        of *lifetime* active days — not "days within an unbroken streak",
+        deliberately, because tying earning to streak length would make
+        freezes require the very thing they exist to protect against — capped
+        at `MAX_BANKED_FREEZES` (3). A freeze bridges exactly ONE missed
+        calendar day; two or more consecutive missed days break the streak
+        regardless of freezes banked. Spent greedily, in chronological order,
+        the moment a bridgeable gap is walked.
+      - **`queries.ts`'s `currentStreak`/`longestStreak` were left
+        untouched**, not replaced — they're still the correct answer to "the
+        raw, unforgiving streak", and `streaks.ts` is intentionally a
+        separate module built alongside them, not a rewrite.
+      - **The "mid-day, not yet extended" rule extends naturally to a second
+        day when a freeze covers it.** Gap-to-today of 0 or 1 = alive as
+        before (Step 1's rule, unchanged). Gap of exactly 2 (yesterday missed,
+        nothing logged yet today either) = alive AND `freezeActive: true` if
+        a freeze is banked, otherwise broken. Gap of 3+ = broken regardless —
+        a freeze forgives one off day, not an extended absence. This live
+        "gap to today" case is provisional by construial, not by a stored
+        flag: if the user logs something today it becomes the next day walked
+        by the historical loop, which spends the freeze for real; if they log
+        nothing today either, the gap grows past what any freeze can bridge
+        on the next call. Nothing needs to be "given back" either way.
+      - **A backdated entry can only help, never retroactively break an
+        existing streak — proved as a structural invariant, not asserted.**
+        Because the whole computation is a stateless walk over the FULL
+        sorted day-key set every time (never incremental, never dependent on
+        insertion order), inserting one more active day can only narrow an
+        existing gap or leave others unchanged — narrowing a gap can only
+        hold a run's length steady or extend it, and can only hold freeze
+        spend steady or free one up. There is no path through the loop where
+        adding a day lowers `currentStreak`, `longestStreak`, or
+        `freezesAvailable`. Tested directly: every possible single-day
+        backfill across three different fixture scenarios (including one with
+        a freeze-bridged run) is checked to never regress any of the three.
+      - **`dayDifference()`** (new, in `lib/watchlog/types.ts`) computes whole
+        calendar days between two day keys through `Date.UTC` on both sides
+        rather than subtracting two local `Date`s — local subtraction is off
+        by one across a DST boundary (a 23- or 25-hour day isn't
+        86,400,000ms), while anchoring both sides through the same UTC
+        conversion cancels the local offset out entirely. Verified directly
+        against both the 2026 US spring-forward (03-08) and fall-back (11-01)
+        dates, not just asserted correct.
+      - **No guilt-tripping messaging, by design, in two different ways for
+        the two surfaces.** `StreakBadge` (Home, `components/streak/`) is the
+        "ambient but not nagging" placement — a small accent-tinted chip
+        (`Badge variant="accent"`, same visual language as
+        `ShowProgressBadge`) that renders NOTHING at a 0 streak rather than
+        showing "0-day streak", because a visible zero would itself be the
+        nag. `StreakSummary` (Profile) states a 0 streak plainly instead
+        ("no active streak right now — watch something to start one") since
+        Profile is a page visited specifically to check stats, where silence
+        would read as broken rather than absent. Neither surface uses
+        danger/warning tokens, a countdown, or urgency copy anywhere;
+        `freezeActive` is framed as reassurance ("protected by a freeze" /
+        "still alive"), never as a warning.
+      - **`useStreak()`** (`components/streak/use-streak.ts`), shared by both
+        surfaces, same orchestration-hook idiom as `use-up-next-items.ts` and
+        `use-xp.ts`. Re-fetches `getActiveDays()` whenever `useTracking()`'s
+        `entries` changes — not because tracking state and the watch log are
+        the same thing, but because a tracking mutation is the only thing
+        that ever appends to the log, so `entries` changing is a cheap,
+        close-enough proxy for "the log may have changed" without a dedicated
+        event bus for one hook. Documented as an accepted approximation (it
+        can re-fetch on tracking changes that never touch the log, e.g.
+        moving something to "watchlist") rather than a precise dependency.
+      - 25 new tests in `lib/watchlog/streaks.test.ts` (earning, capping,
+        spending, the live gap-to-today case, the backdating invariant,
+        DST-boundary `dayDifference`) — 228 total across the suite.
+      - **Not independently verified in-browser this step** — the Chrome
+        extension was disconnected for the whole session. Verified instead:
+        lint/tests/build all pass, and the actually-running dev server's own
+        log showed both new components compiling and hot-reloading with zero
+        errors when Home and `/profile` were requested. The visual/interactive
+        pass (badge appearance, Profile card, 375px) is still owed.
 - [ ] **Step 4** — PWA manifest + service worker
 
 ---

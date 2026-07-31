@@ -1,6 +1,7 @@
 "use client";
 
 import { XpSummary } from "@/components/profile/xp-summary";
+import { StreakSummary } from "@/components/streak/streak-summary";
 
 /**
  * Client-rendered for the same reason `LibraryView` is: XP is derived from
@@ -13,12 +14,13 @@ export function ProfileView() {
       <div>
         <h1 className="font-display text-display-lg text-fg uppercase">Profile</h1>
         <p className="text-body-sm text-fg-subtle mt-1 max-w-prose">
-          Accounts, streaks, and badges arrive in later phases. For now Marquee
-          runs entirely on this device — nothing is synced anywhere.
+          Accounts and badges arrive in later phases. For now Marquee runs
+          entirely on this device — nothing is synced anywhere.
         </p>
       </div>
 
       <XpSummary />
+      <StreakSummary />
     </div>
   );
 }

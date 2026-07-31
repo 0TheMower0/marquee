@@ -46,6 +46,7 @@ export { watchLogStore } from "./store";
 export { addedEpisodes } from "./diff";
 export type { AddedEpisode } from "./diff";
 export {
+  dayDifference,
   isDayKey,
   isWatchEvent,
   isWatchLogDay,
@@ -72,6 +73,12 @@ export {
   yearsCovered,
 } from "./queries";
 export type { WatchTotals } from "./queries";
+export {
+  computeStreakStatus,
+  FREEZE_EARN_INTERVAL_DAYS,
+  MAX_BANKED_FREEZES,
+} from "./streaks";
+export type { StreakStatus } from "./streaks";
 
 /* ---------------------------------------------------------------------------
  * Appending
