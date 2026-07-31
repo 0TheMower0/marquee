@@ -78,3 +78,20 @@ export const SAFE_MESSAGE: Record<ContentErrorKind, string> = {
 /** Sent for malformed input. Kept separate so it can't be confused with a
  *  provider failure — see the note on validation in lib/api/validate.ts. */
 export const BAD_REQUEST_MESSAGE = "Invalid request parameters.";
+
+/**
+ * Sent when OUR OWN limiter rejects a caller, as opposed to
+ * `SAFE_MESSAGE.rate_limited`, which means the upstream content source
+ * rejected US. Both are HTTP 429 with kind `rate_limited`, and that shared
+ * representation is correct rather than a conflation: from the client's side
+ * the situation and the correct reaction are identical — back off, retry
+ * later — which is exactly the test CLAUDE.md applies when it insists
+ * validation errors stay separate from `ContentError` (there, the client's
+ * reaction genuinely differs: fix the request vs. retry it unchanged).
+ *
+ * Server-side the two never mix: our limiter returns a Response directly and
+ * never constructs a `ContentError`. Only the wire representation coincides,
+ * and the message is what keeps the two causes distinguishable in a log or a
+ * bug report.
+ */
+export const RATE_LIMITED_MESSAGE = "Too many requests. Please slow down and try again shortly.";

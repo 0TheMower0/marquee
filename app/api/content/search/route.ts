@@ -1,12 +1,19 @@
 import type { NextRequest } from "next/server";
 
-import { CACHE_SECONDS, handleRouteError, jsonOk } from "@/lib/api/respond";
+import { CACHE_SECONDS, enforceRateLimit, handleRouteError, jsonOk } from "@/lib/api/respond";
 import { parseMediaType, parsePage, parseQuery } from "@/lib/api/validate";
 import { getContentProvider } from "@/lib/content";
 import type { MediaType, PagedResult, TitleSummary } from "@/lib/content/types";
+import { RATE_LIMITS } from "@/lib/ratelimit";
 
 /** GET /api/content/search?query=...&mediaType=movie|tv&page=1 */
 export async function GET(request: NextRequest) {
+  // Before validation and before any provider call: a rejected caller must
+  // cost us nothing upstream. Search gets the tighter limit because a unique
+  // `?query=` per request defeats every cache layer we have.
+  const limited = await enforceRateLimit(request, RATE_LIMITS.search);
+  if (limited) return limited;
+
   try {
     const params = request.nextUrl.searchParams;
     const query = parseQuery(params.get("query"));

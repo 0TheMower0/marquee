@@ -264,37 +264,37 @@ A blank search query returns an empty page rather than a 400, because that is
 what `mockProvider` and `tmdbProvider` both do. The HTTP transport must not be
 the odd one out — that is the whole point of the interface.
 
-### These routes are a public surface — rate limiting is Phase 6 Step 2
+### These routes are a public surface — rate limited since Phase 6 Step 2
 
 Once deployed, `app/api/content/*` is callable by anyone who finds the URL, not
-just by our own client code. There is **no rate limiting, no auth, and no
-abuse protection on them today.** That is acceptable for a personal,
-unadvertised deployment and is not acceptable indefinitely.
+just by our own client code. There is still **no auth** on them (that is Phase 6
+Step 4), but there is now per-IP rate limiting — `lib/ratelimit/`.
 
-What already limits the blast radius:
+Layers, outermost first:
 
 - Every response sets `s-maxage` (see `CACHE_SECONDS`), so repeated identical
   requests are absorbed by the CDN rather than reaching TMDB.
 - `next.revalidate` on the TMDB fetches caches upstream results independently.
 - Input validation caps `page` at 500 and `query` at 200 characters, so a
   single request can't ask for something unbounded.
+- **Per-IP sliding-window limits**, applied before validation and before any
+  provider call, so a rejected caller costs us nothing upstream.
+- **A global daily budget** on the one hard external quota (OMDb).
 
-What is still missing is real **per-IP** rate limiting. Without it a determined
-caller can burn our TMDB quota via cache-missing queries — a unique `?query=`
-string per request defeats every cache layer listed above. Do not treat the
-caching as a substitute.
+Caching is still not a substitute for any of this: a unique `?query=` per
+request defeats every cache layer above it, which is exactly why `search` gets
+a tighter rule than the rest.
 
-**This is scheduled as Phase 6 Step 2, ahead of any Supabase or schema work,
-and it has no dependency on accounts.** An earlier version of this section filed
-it under "Phase 6, where per-user identity finally exists." That was wrong in
-the way that matters: **an attacker burning the quota will not be signed in**,
-so per-user limits do nothing against the actual threat. Per-IP is the control
-that protects the quota, it needs no identity at all, and it is the only thing
-standing between a deployed URL and the TMDB bill. Per-user limits are a
-worthwhile later refinement — better at catching one abusive *account* — but
-they are a complement to per-IP, never a replacement, and nothing waits on them.
+**Per-IP, not per-user, and that ordering was the point.** An earlier version of
+this section filed rate limiting under "Phase 6, where per-user identity finally
+exists." That was wrong in the way that matters: **an attacker burning the quota
+will not be signed in**, so per-user limits do nothing against the actual
+threat. Per-IP needs no identity, so it had no reason to wait behind auth. Per-
+user limits remain a worthwhile later refinement — better at catching one
+abusive *account* — but they are a complement, never a replacement.
 
-See `docs/phase-6-sync-design.md` §10 for the full Phase 6 step order.
+See `docs/phase-6-sync-design.md` §10 for the full Phase 6 step order, and the
+Phase 6 status section below for how the limiter is built.
 
 ---
 
@@ -1921,9 +1921,94 @@ range encoding is deliberately NOT preserved server-side).
       - **Three Phase 5 features needed zero sync design** — XP, streaks, and
         badge conditions are all computed, never stored, so they recompute from
         synced inputs automatically. Direct vindication of that discipline.
-- [ ] **Step 2** — Per-IP rate limiting on `app/api/content/*`. Deliberately
-      ahead of all Supabase work and with **no dependency on accounts** — see
-      the corrected reasoning in "These routes are a public surface" above.
+- [x] **Step 2** — Per-IP rate limiting on `app/api/content/*`
+      (`lib/ratelimit/`). Deliberately ahead of all Supabase work and with **no
+      dependency on accounts** — see "These routes are a public surface" above.
+      - **It lives in the route handlers, NOT in `proxy.ts`**, and that is a
+        documentation-driven decision rather than a preference. Next 16's own
+        proxy reference says: *"Proxy is meant to be invoked separately of your
+        render code and in optimized cases deployed to your CDN... you should
+        not attempt relying on shared modules or globals."* An in-process
+        counter **is** a shared global, so proxy is precisely where the
+        framework tells you module state isn't dependable. Calling the guard
+        per handler also buys what a matcher can't: the rule is chosen per
+        route, which is the only reason the OMDb route's tighter limit is
+        expressible at all.
+      - **Reading `x-forwarded-for` from the RIGHT is the whole security
+        property.** `NextRequest.ip` was removed in Next 15, so the IP comes
+        from headers — and `X-Forwarded-For` is client-supplied. The common
+        `parts[0]` idiom is the bug: an attacker sends
+        `X-Forwarded-For: <forged>`, the proxy appends what it really saw, and
+        reading the left end hands them a fresh bucket per forged value,
+        silently defeating the entire limiter. Reading from the right is also
+        correct when a proxy *replaces* the header, so it is safe under both
+        behaviours. `RATE_LIMIT_TRUSTED_PROXY_HOPS` (default 1, i.e. Vercel)
+        covers deeper proxy chains. Verified live, not assumed: five different
+        forged prefixes sharing one real client IP all stayed 429, while a
+        genuinely different client IP got 200 — the control matters, since
+        "everything 429s" would look identical otherwise.
+      - **A sliding window, not a fixed one.** A fixed window allows `limit`
+        requests at 11:59:59 and another `limit` at 12:00:00 — a 2x burst
+        straddling the boundary, which is the exact shape of a scrape. Keeping
+        timestamps costs at most `limit` numbers per key and makes
+        `Retry-After` exact rather than a guess at "time until reset."
+      - **The in-memory store is per-PROCESS and is documented as such.** On
+        serverless, N warm instances means an effective ceiling of N x limit,
+        and a cold start resets a bucket. This is not a strict distributed
+        limiter and must not be described as one. It still cuts a scrape by
+        orders of magnitude at zero dependencies and zero credentials, which
+        keeps the zero-config promise. `RateLimitStore` is the swap point: a
+        Redis implementation is one class plus one line in `limiter.ts`, no
+        route handler moves — the same arrangement `StorageDriver` uses to keep
+        the IndexedDB path open.
+      - **The global daily budget exists because per-IP structurally cannot
+        defend a global quota.** OMDb's free tier is 1,000/day across all
+        callers; a thousand IPs taking one each, or one caller forging
+        `X-Forwarded-For`, exhausts it with every per-IP bucket still green.
+        `budget.ts` doesn't depend on caller identity at all, so spoofing can't
+        evade it. It counts route invocations, not confirmed OMDb network calls
+        (a request served from Next's data cache is counted despite spending no
+        quota) — over-counting on purpose, because it fails in the safe
+        direction and the budget sits well above real traffic.
+      - **Exhausted budget returns `[]`, not a 429.** That is the exact state a
+        blank `OMDB_API_KEY` already produces, which CLAUDE.md documents as
+        supported rather than broken. Erroring would break a page over a
+        *secondary* source being unavailable. It uses
+        `CACHE_SECONDS.ratingsDegraded` (5 min), **never** the 7-day `ratings`
+        lifetime — caching a degraded answer for a week would turn a few hours
+        of throttling into a week of missing ratings.
+      - **`budget.ts` uses `toISOString().slice(0, 10)`, and that is correct
+        here** — worth stating so nobody "fixes" it to match the hard warning
+        in `lib/watchlog/types.ts`. That warning is about a user's personal
+        watch history, where the day is a fact about where the *user* was. This
+        is a vendor's global quota counter: no user's timezone is involved,
+        every instance must agree on one boundary, and a local date would make
+        the reset point depend on which region an instance ran in.
+      - **Our 429 and an upstream 429 share status and `kind`, deliberately.**
+        `RATE_LIMITED_MESSAGE` (we limited you) is distinct from
+        `SAFE_MESSAGE.rate_limited` (TMDB limited us), so the two causes stay
+        distinguishable in a log — but both are HTTP 429 with kind
+        `rate_limited`, because from the client's side the situation and the
+        correct reaction are identical. That is the same test CLAUDE.md applies
+        when insisting validation errors stay separate from `ContentError`
+        (there the client's reaction genuinely differs: fix the request vs.
+        retry it unchanged). Server-side the two never mix — the limiter
+        returns a `Response` directly and never constructs a `ContentError`.
+      - The 429 sets `cache-control: no-store`. A CDN that cached one caller's
+        429 would serve it to everyone sharing that edge, turning a per-IP
+        limit into an outage.
+      - Limits: `read` 120/min, `search` 30/min, `ratings` 15/min. Sized against
+        real page behaviour — a TV detail page fires ~6 of these at once, so a
+        limit a normal page view can trip is not a limit, it's an outage.
+        `RATE_LIMIT_DISABLED=1` exists for local load testing and is off by
+        default, so the limiter runs in development too: one that only runs in
+        production is one whose bugs are found in production.
+      - 29 tests in `lib/ratelimit/ratelimit.test.ts` (spoofing, IPv6/port
+        normalization, window boundaries, the cross-boundary burst, exact
+        `Retry-After`, memory eviction, budget rollover) — 326 total. Verified
+        live against the dev server: search allowed exactly 30 then 429'd,
+        ratings exactly 15, per-rule buckets stayed independent, and the 429
+        carried `retry-after: 43` with `no-store`.
 - [ ] **Step 3** — Supabase project, schema, RLS policies, and the two-account
       verification that RLS actually holds
 - [ ] **Step 4** — Auth, plus the first-login merge: pre-merge backup, the

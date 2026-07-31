@@ -4,9 +4,11 @@ import { ContentError } from "@/lib/content/errors";
 import {
   BAD_REQUEST_MESSAGE,
   KIND_STATUS,
+  RATE_LIMITED_MESSAGE,
   SAFE_MESSAGE,
   type ApiErrorBody,
 } from "@/lib/content/http/wire";
+import { checkRateLimit, type RateLimitRule } from "@/lib/ratelimit";
 import { BadRequestError } from "./validate";
 
 /**
@@ -39,12 +41,68 @@ export const CACHE_SECONDS = {
    *  1,000 requests/day, so this CDN layer is a real part of staying inside
    *  the quota rather than a nicety — see lib/content/omdb/client.ts. */
   ratings: 604_800,
+  /**
+   * 5 minutes, for the empty ratings response served once the daily OMDb
+   * budget is spent (see lib/ratelimit/budget.ts).
+   *
+   * It MUST NOT reuse `ratings` above: caching a degraded "no external
+   * ratings" answer for 7 days would keep serving it long after the budget
+   * resets at midnight UTC, turning a few hours of throttling into a week of
+   * missing data. Short enough to recover promptly, long enough that the
+   * degraded path itself can't become a load source.
+   */
+  ratingsDegraded: 300,
 } as const;
 
 export function jsonOk<T>(data: T, sMaxAge: number): Response {
   return Response.json(data, {
     headers: {
       "cache-control": `public, max-age=0, s-maxage=${sMaxAge}, stale-while-revalidate=${sMaxAge}`,
+    },
+  });
+}
+
+/**
+ * The rate-limit guard every `app/api/content/*` handler runs first.
+ *
+ * Returns a ready-to-send 429 when the caller is over their limit, or `null`
+ * to proceed — so the call site reads:
+ *
+ *     const limited = await enforceRateLimit(request, RATE_LIMITS.search);
+ *     if (limited) return limited;
+ *
+ * An explicit call rather than a wrapper HOF, matching `handleRouteError`'s
+ * existing idiom in these same files: it is greppable, it keeps the rule
+ * choice visible in the route it applies to, and it does not obscure the
+ * handler's signature (which Next's generated `RouteContext<>` types depend
+ * on).
+ */
+export async function enforceRateLimit(
+  request: Request,
+  rule: RateLimitRule,
+): Promise<Response | null> {
+  const decision = await checkRateLimit(request, rule);
+  if (decision.allowed) return null;
+
+  const body: ApiErrorBody = {
+    error: { kind: "rate_limited", message: RATE_LIMITED_MESSAGE },
+  };
+
+  return Response.json(body, {
+    status: 429,
+    headers: {
+      // The one header a well-behaved client actually acts on. Seconds, per
+      // RFC 9110 — `checkRateLimit` guarantees it is never 0, since a
+      // `Retry-After: 0` invites an immediate retry certain to fail again.
+      "retry-after": String(decision.retryAfterSeconds),
+      // draft-ietf-httpapi-ratelimit-headers, widely understood by tooling.
+      "ratelimit-limit": String(decision.limit),
+      "ratelimit-remaining": "0",
+      "ratelimit-reset": String(decision.retryAfterSeconds),
+      // MUST NOT be cached. A CDN that cached one caller's 429 would serve it
+      // to every other caller for its lifetime — turning a per-IP limit into
+      // an outage for everyone sharing that edge.
+      "cache-control": "no-store",
     },
   });
 }
