@@ -156,6 +156,16 @@ export function SkipToIcon(props: IconProps) {
   );
 }
 
+/** The badges indicator — distinct from StarIcon, which is XP's. */
+export function RibbonIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="8" r="5" />
+      <path d="m9 12.5-2 8 5-3 5 3-2-8" />
+    </Icon>
+  );
+}
+
 /** The streak indicator. */
 export function FlameIcon(props: IconProps) {
   return (

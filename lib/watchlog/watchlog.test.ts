@@ -7,8 +7,11 @@ import {
   byWeekday,
   currentStreak,
   daysInYear,
+  earliestDayForTitle,
   eventsForTitle,
+  hasRepeatedMark,
   longestStreak,
+  maxEpisodesOfSameTitleInADay,
   totals,
   trackingSince,
   yearsCovered,
@@ -483,5 +486,132 @@ describe("eventsForTitle", () => {
     expect(eventsForTitle(days, "tv:1396")).toHaveLength(2);
     expect(eventsForTitle(days, "movie:238")).toHaveLength(1);
     expect(eventsForTitle(days, "tv:9999")).toHaveLength(0);
+  });
+});
+
+describe("maxEpisodesOfSameTitleInADay", () => {
+  it("is 0 for an empty log", () => {
+    expect(maxEpisodesOfSameTitleInADay([])).toBe(0);
+  });
+
+  it("counts episode events for one title within a single day", () => {
+    const days: WatchLogDay[] = [
+      [
+        { k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 1 },
+        { k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 2 },
+        { k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 3 },
+      ],
+    ];
+    expect(maxEpisodesOfSameTitleInADay(days)).toBe(3);
+  });
+
+  it("does not sum across separate days", () => {
+    const days: WatchLogDay[] = [
+      [{ k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 1 }],
+      [{ k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 2 }],
+    ];
+    expect(maxEpisodesOfSameTitleInADay(days)).toBe(1);
+  });
+
+  it("does not mix two different titles' counts within the same day", () => {
+    const days: WatchLogDay[] = [
+      [
+        { k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 1 },
+        { k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 2 },
+        { k: WATCH_KIND.EPISODE, t: "tv:9999", s: 1, e: 1 },
+      ],
+    ];
+    expect(maxEpisodesOfSameTitleInADay(days)).toBe(2);
+  });
+
+  it("ignores non-episode events", () => {
+    const days: WatchLogDay[] = [
+      [
+        { k: WATCH_KIND.MOVIE, t: "movie:238" },
+        { k: WATCH_KIND.MOVIE, t: "movie:238" }, // hypothetical, still not an episode
+        { k: WATCH_KIND.TITLE, t: "tv:1" },
+      ],
+    ];
+    expect(maxEpisodesOfSameTitleInADay(days)).toBe(0);
+  });
+});
+
+describe("hasRepeatedMark", () => {
+  it("is false for an empty log", () => {
+    expect(hasRepeatedMark([])).toBe(false);
+  });
+
+  it("is false when nothing repeats", () => {
+    const days: WatchLogDay[] = [
+      [
+        { k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 1 },
+        { k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 2 },
+        { k: WATCH_KIND.MOVIE, t: "movie:238" },
+      ],
+    ];
+    expect(hasRepeatedMark(days)).toBe(false);
+  });
+
+  it("detects the same episode logged on two different days (unmark, then remark)", () => {
+    const days: WatchLogDay[] = [
+      [{ k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 1 }],
+      [{ k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 1 }],
+    ];
+    expect(hasRepeatedMark(days)).toBe(true);
+  });
+
+  it("detects a repeated movie mark", () => {
+    const days: WatchLogDay[] = [
+      [{ k: WATCH_KIND.MOVIE, t: "movie:238" }],
+      [{ k: WATCH_KIND.MOVIE, t: "movie:238" }],
+    ];
+    expect(hasRepeatedMark(days)).toBe(true);
+  });
+
+  it("does not confuse two different episodes of the same show", () => {
+    const days: WatchLogDay[] = [
+      [
+        { k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 1 },
+        { k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 2 },
+      ],
+    ];
+    expect(hasRepeatedMark(days)).toBe(false);
+  });
+
+  it("does not confuse a movie and a title-level event on the same id", () => {
+    // Same t-string is possible only across kinds in synthetic data, but the
+    // identity key includes `k`, so this must not be treated as a repeat.
+    const days: WatchLogDay[] = [
+      [
+        { k: WATCH_KIND.MOVIE, t: "x:1" },
+        { k: WATCH_KIND.TITLE, t: "x:1" },
+      ],
+    ];
+    expect(hasRepeatedMark(days)).toBe(false);
+  });
+});
+
+describe("earliestDayForTitle", () => {
+  it("is empty for an empty log", () => {
+    expect(earliestDayForTitle([])).toEqual({});
+  });
+
+  it("picks the earliest day per title regardless of input order", () => {
+    const entries: [string, WatchLogDay][] = [
+      ["2026-07-15", [{ k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 3 }]],
+      ["2026-07-01", [{ k: WATCH_KIND.EPISODE, t: "tv:1396", s: 1, e: 1 }]],
+      ["2026-07-10", [{ k: WATCH_KIND.MOVIE, t: "movie:238" }]],
+    ];
+    expect(earliestDayForTitle(entries)).toEqual({
+      "tv:1396": "2026-07-01",
+      "movie:238": "2026-07-10",
+    });
+  });
+
+  it("ignores invalid day keys", () => {
+    const entries: [string, WatchLogDay][] = [
+      ["not-a-day", [{ k: WATCH_KIND.EPISODE, t: "tv:1", s: 1, e: 1 }]],
+    ];
+    expect(earliestDayForTitle(entries)).toEqual({});
   });
 });

@@ -57,6 +57,13 @@ export interface StreakStatus {
    *  the gap grows to two full missed days and no freeze can cover that —
    *  there is nothing to "give back" in either case. */
   freezeActive: boolean;
+  /** How many freezes have ever actually bridged a gap in the HISTORICAL walk
+   *  (Phase 5 Step 4's "Comeback" badge). Deliberately does NOT count a
+   *  currently-`freezeActive` provisional bridge — that one hasn't really
+   *  happened yet, per the note on `freezeActive` above, so counting it here
+   *  would let the badge unlock and then, if the gap resolves as broken
+   *  instead, have "already" credited a spend that never occurred. */
+  freezesSpentLifetime: number;
 }
 
 const EMPTY_STATUS: StreakStatus = {
@@ -64,6 +71,7 @@ const EMPTY_STATUS: StreakStatus = {
   longestStreak: 0,
   freezesAvailable: 0,
   freezeActive: false,
+  freezesSpentLifetime: 0,
 };
 
 /**
@@ -94,6 +102,7 @@ export function computeStreakStatus(
   let streak = 0;
   let longest = 0;
   let activeCount = 0;
+  let freezesSpent = 0;
   let previous: DayKey | null = null;
 
   for (const day of days) {
@@ -107,6 +116,7 @@ export function computeStreakStatus(
         streak += 1;
       } else if (gap === 2 && freezes > 0) {
         freezes -= 1;
+        freezesSpent += 1;
         streak += 1;
       } else {
         streak = 1;
@@ -129,10 +139,28 @@ export function computeStreakStatus(
   const gapToToday = dayDifference(lastActive, today);
 
   if (gapToToday <= 1) {
-    return { currentStreak: streak, longestStreak: longest, freezesAvailable: freezes, freezeActive: false };
+    return {
+      currentStreak: streak,
+      longestStreak: longest,
+      freezesAvailable: freezes,
+      freezeActive: false,
+      freezesSpentLifetime: freezesSpent,
+    };
   }
   if (gapToToday === 2 && freezes > 0) {
-    return { currentStreak: streak, longestStreak: longest, freezesAvailable: freezes, freezeActive: true };
+    return {
+      currentStreak: streak,
+      longestStreak: longest,
+      freezesAvailable: freezes,
+      freezeActive: true,
+      freezesSpentLifetime: freezesSpent,
+    };
   }
-  return { currentStreak: 0, longestStreak: longest, freezesAvailable: freezes, freezeActive: false };
+  return {
+    currentStreak: 0,
+    longestStreak: longest,
+    freezesAvailable: freezes,
+    freezeActive: false,
+    freezesSpentLifetime: freezesSpent,
+  };
 }

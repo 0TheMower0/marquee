@@ -1667,7 +1667,110 @@ do not implement them early.
         log showed both new components compiling and hot-reloading with zero
         errors when Home and `/profile` were requested. The visual/interactive
         pass (badge appearance, Profile card, 375px) is still owed.
-- [ ] **Step 4** — PWA manifest + service worker
+- [x] **Step 4** — Badges (`lib/badges/`). 20 badges across five categories —
+      exploration, completion, habit, taste, discovery — designed around
+      taste and exploration rather than raw volume (a "watched 100 episodes"
+      badge was explicitly rejected as boring during design review; "watched
+      titles across 6 genres" says something about the person instead).
+      - **Unlock conditions are pure, computed functions over data already in
+        hand** — `lib/tracking`, `lib/ratings`, `lib/watchlog` — no badge ever
+        triggers a content-provider fetch to evaluate. Two ideas from the
+        original proposal (a country-diversity badge, a real-vote-count
+        "obscure title" badge) were dropped because `Title`/`TitleSummary`
+        carry no `originCountry`/`originalLanguage`/`voteCount` today; adding
+        them is real scope (new field on `Title`, implemented in BOTH
+        providers) deferred rather than done implicitly. Noted here as
+        candidates if `Title` is ever extended: **Passport** (5 distinct
+        countries) and **Under the Radar** (watched something under ~500 TMDB
+        votes). "First to Know" (watched something TMDB has no rating for at
+        all) ships instead, using data already on hand.
+      - **Derived-not-stored could NOT be taken literally, and that's a
+        deliberate, discussed exception, not a lapse.** Most badges are
+        monotonic (genres watched can only grow), but a few conditions — most
+        notably "Caught Up" (watchlist currently empty) — can become false
+        again later. A purely live-recomputed badge would flicker on and off
+        the badge case and give the unlock toast no reliable moment to fire,
+        the identical problem `lib/xp/store.ts`'s `seenLevelStore` already
+        solved for level-ups. **`lib/badges/store.ts`'s `badgesEarnedStore`
+        mirrors that store exactly**: one record per earned badge, key =
+        badge id, value = `{ earnedAt }`. Nothing about a badge's UNLOCK
+        LOGIC is stored — only WHEN it first became true — so adding or
+        retuning a badge's predicate still needs no migration, which is what
+        "derived, not stored" was actually protecting.
+      - **`evaluateBadges()` (`lib/badges/evaluate.ts`) is pure**: given the
+        20 definitions, a `BadgeContext`, and the current ledger, it returns
+        every badge's live status (`record !== undefined || predicate(context)`
+        — ledgered OR live-true, which is exactly what makes stickiness work)
+        plus which ids are newly true and NOT yet ledgered. It does not touch
+        storage; `components/badges/use-badges.ts` decides what to persist
+        and when to celebrate.
+      - **First-ever-evaluation backfills silently, with no toast storm.** A
+        user adopting this feature after months of existing tracking/rating/
+        streak history would otherwise open Profile to 6+ toasts firing at
+        once for things they did long before badges existed. `useBadges()`
+        captures "was the ledger completely empty when it first loaded" once,
+        consumes that flag unconditionally on the FIRST evaluation pass
+        regardless of outcome (fixed after an early draft only consumed it
+        inside the `newlyEarnedIds.length > 0` branch, which meant a genuinely
+        new user's very first REAL badge, earned live later, would have been
+        silently swallowed too — caught by tracing the flag's lifecycle by
+        hand, not by a test), and only suppresses the toast on that one pass.
+        Every badge is still persisted either way; only the celebration is
+        skipped for the backfill.
+      - **`statuses` is derived in the render body, not synced into state via
+        an effect** — eslint's `react-hooks/set-state-in-effect` rejects that
+        outright, the same rule the Search page's own comment documents.
+        Worth being precise about the fix, because the first attempt still
+        failed differently: moving the setState calls into the effect's
+        conditional branch (`if (newlyEarnedIds.length === 0) return;`
+        before them) was NOT enough — the rule objects to synchronous
+        `setState` ANYWHERE in an effect body, conditional or not. Both
+        `setLedger`/`setNewlyUnlocked` calls had to move inside the
+        `Promise.all(...).then()` continuation that follows persisting the
+        newly-earned badges, the identical idiom `use-xp.ts`'s
+        `justLeveledUp` effect already uses (`setJustLeveledUp` inside
+        `getHighestLevelSeen().then(...)`, not at the top level).
+      - **New watch-log aggregates** (`lib/watchlog/queries.ts`):
+        `maxEpisodesOfSameTitleInADay` (Marathoner), `hasRepeatedMark`
+        (Second Helping — detects a genuine unmark-then-remark, the ONLY way
+        the exact same kind+title+episode can appear twice in the log, since
+        both `logEpisodeMutation` and `setStatus` log strictly on a
+        transition INTO watched), and `earliestDayForTitle` (Deep Cut). Plus
+        one field on `StreakStatus` itself, `freezesSpentLifetime` (Comeback)
+        — counts only a freeze that has ACTUALLY bridged a historical gap,
+        deliberately excluding a currently-`freezeActive` provisional bridge
+        that hasn't been confirmed by a later log entry yet.
+      - **"Second Helping" was checked for feasibility, not approximated,
+        per an explicit instruction to skip it and say why if it couldn't be
+        done honestly.** It IS detectable, exactly: `logEpisodeMutation` and
+        `setStatus` both log strictly on a transition INTO watched, so a
+        duplicate `(kind, title[, season, episode])` tuple in the log can only
+        mean the user unmarked something and marked it watched again later —
+        never a bulk-action artifact or a double-log bug.
+      - **"Deep Cut"** (released 40+ years before you watched it) compares a
+        title's release year against the EARLIEST day it was ever logged, not
+        "now" — a title marked watched before Phase 5 Step 1 shipped has no
+        log entry at all and simply cannot unlock this one, the same honest
+        no-backfill gap already accepted for streaks and XP.
+      - Locked badges show their own `description` (the same string an
+        unlocked badge would show as "how you got it" reversed to "how to get
+        it") — nothing is ever blanked out or hidden for being locked, which
+        is the whole point per the brief: a visible condition is what makes a
+        locked badge motivating instead of a surprise.
+      - `RibbonIcon` added to `components/ui/icons.tsx`, deliberately
+        distinct from `StarIcon` (XP) — two different gamification systems on
+        the same page needed two different marks.
+      - 37 new tests in `lib/badges/badges.test.ts` (every predicate's locked
+        and unlocked boundary, `evaluateBadges`'s newly-earned detection, and
+        an explicit stickiness test: a badge stays unlocked via the ledger
+        even after its live condition goes false again) plus new coverage in
+        `lib/watchlog/watchlog.test.ts` and `streaks.test.ts` for the four
+        new aggregates — 280 total across the suite.
+      - **Not independently verified in-browser this step**, same Chrome
+        extension gap as Step 3. Verified instead: lint/tests/build/typecheck
+        all pass, and the actually-running dev server hot-reloaded `/profile`
+        with the new `BadgeCase` wired in and zero new errors in its log.
+- [ ] **Step 5** — PWA manifest + service worker
 
 ---
 

@@ -52,6 +52,7 @@ describe("computeStreakStatus — no history", () => {
       longestStreak: 0,
       freezesAvailable: 0,
       freezeActive: false,
+      freezesSpentLifetime: 0,
     });
   });
 });
@@ -129,6 +130,7 @@ describe("computeStreakStatus — spending freezes to bridge a single missed day
     const status = computeStreakStatus(days, afterGap);
     expect(status.currentStreak).toBe(run.length + 1); // bridged, not reset to 1
     expect(status.freezesAvailable).toBe(0); // the one earned freeze was spent
+    expect(status.freezesSpentLifetime).toBe(1);
   });
 
   it("does NOT bridge a lone missed day when no freeze is banked", () => {
@@ -160,6 +162,17 @@ describe("computeStreakStatus — spending freezes to bridge a single missed day
 
     expect(status.currentStreak).toBe(days.length); // every gap bridged
     expect(status.freezesAvailable).toBe(0); // both spent, none left over
+    expect(status.freezesSpentLifetime).toBe(2);
+  });
+
+  it("does not count a live, provisional freezeActive bridge toward freezesSpentLifetime", () => {
+    const run = Array.from({ length: FREEZE_EARN_INTERVAL_DAYS }, (_, i) => shift("2026-07-01", i));
+    const lastActive = run[run.length - 1];
+    const today = shift(lastActive, 2); // freezeActive case, nothing logged yet today
+
+    const status = computeStreakStatus(run, today);
+    expect(status.freezeActive).toBe(true);
+    expect(status.freezesSpentLifetime).toBe(0); // not "really" spent until confirmed
   });
 });
 

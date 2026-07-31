@@ -178,3 +178,71 @@ export function eventsForTitle(
   }
   return found;
 }
+
+/**
+ * The largest number of EPISODE-kind events for one title logged on a single
+ * day, across the whole log. Each `WatchLogDay` is already exactly one
+ * calendar day's events (that is the log's own bucketing), so this needs no
+ * day keys — just count within each day and keep the max. Powers the
+ * "Marathoner" badge.
+ */
+export function maxEpisodesOfSameTitleInADay(days: Iterable<WatchLogDay>): number {
+  let max = 0;
+  for (const day of days) {
+    const perTitle = new Map<string, number>();
+    for (const event of day) {
+      if (event.k !== WATCH_KIND.EPISODE) continue;
+      const count = (perTitle.get(event.t) ?? 0) + 1;
+      perTitle.set(event.t, count);
+      if (count > max) max = count;
+    }
+  }
+  return max;
+}
+
+/**
+ * True if the exact same thing (same kind, same title, same episode when
+ * applicable) was ever logged more than once. The ONLY way that happens is a
+ * genuine unmark-then-remark: `logEpisodeMutation`/`setStatus` both log
+ * strictly on a transition INTO watched (see the comments at their call
+ * sites), so a duplicate here is never bulk-action fan-out or a logging bug —
+ * it is the user marking something watched, then marking it watched again
+ * later. Powers "Second Helping".
+ */
+export function hasRepeatedMark(days: Iterable<WatchLogDay>): boolean {
+  const seen = new Set<string>();
+  for (const day of days) {
+    for (const event of day) {
+      const identity = `${event.k}:${event.t}:${event.s ?? ""}:${event.e ?? ""}`;
+      if (seen.has(identity)) return true;
+      seen.add(identity);
+    }
+  }
+  return false;
+}
+
+/**
+ * The earliest day key on which each title was logged, keyed by the event's
+ * `t` field. For a multi-episode show this is the day the FIRST logged event
+ * happened, a reasonable proxy for "when you started watching it" — good
+ * enough for a badge, not a precise per-episode timeline.
+ *
+ * A title marked watched before Phase 5 Step 1 shipped (no backfill, by
+ * design — see the note in ./index.ts) has no entry here at all. That is an
+ * honest gap, not a bug: nothing in the log knows when it happened.
+ */
+export function earliestDayForTitle(
+  entries: Iterable<[DayKey, WatchLogDay]>,
+): Record<string, DayKey> {
+  const earliest: Record<string, DayKey> = {};
+  for (const [day, events] of entries) {
+    if (!isDayKey(day)) continue;
+    for (const event of events) {
+      const existing = earliest[event.t];
+      if (existing === undefined || day < existing) {
+        earliest[event.t] = day;
+      }
+    }
+  }
+  return earliest;
+}

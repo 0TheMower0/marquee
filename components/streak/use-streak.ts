@@ -33,6 +33,7 @@ const EMPTY_STATUS: StreakStatus = {
   longestStreak: 0,
   freezesAvailable: 0,
   freezeActive: false,
+  freezesSpentLifetime: 0,
 };
 
 export function useStreak(): UseStreakResult {
