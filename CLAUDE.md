@@ -1215,7 +1215,7 @@ w500 changes mean chroma by <0.001, so no resample-kernel tuning is warranted.
 | 2 *(done)* | Search, My Library, watchlist/watched state |
 | 3 *(done)* | Episode-level progress, "Up Next" engine |
 | 4 *(done)* | Rich detail pages with artwork-derived dynamic theming |
-| **5** *(current)* | XP, levels, streaks, badges; PWA manifest + service worker |
+| **5** *(current)* | XP, levels, streaks, badges, stats dashboard; PWA manifest + service worker |
 | 6 | Supabase accounts, spoiler-safe comments, shared lists |
 | 7 | CSV importers (Trakt/Letterboxd/TV Time), new-episode notifications |
 | 8 | Year in Review |
@@ -1770,7 +1770,93 @@ do not implement them early.
         extension gap as Step 3. Verified instead: lint/tests/build/typecheck
         all pass, and the actually-running dev server hot-reloaded `/profile`
         with the new `BadgeCase` wired in and zero new errors in its log.
-- [ ] **Step 5** — PWA manifest + service worker
+- [x] **Step 5** — The stats dashboard (`lib/stats/`, `components/stats/`,
+      `/profile/stats`). Its own route rather than one more card on the
+      already-long Profile page — Profile already carries XP, streak, and
+      badge cards; this adds total watch time, this-year/all-time episode
+      and film counts, genre and decade breakdowns, most-watched shows,
+      rating distribution with a TMDB comparison, and a full-year viewing
+      heatmap. Reached from Profile via a "Full stats" button.
+      - **Hand-rolled charts, deliberately, not a charting library.** This
+        project has zero chart dependencies and a demonstrated preference
+        for avoiding exactly this kind of dependency — see the doc comment
+        on `Icon()` in `components/ui/icons.tsx`, which makes the identical
+        argument for icons: no bundle weight, no API surface to learn, and
+        (the part that actually mattered here) automatic theme integration.
+        `BarChart` and `CalendarHeatmap` (`components/stats/`) are plain
+        `bg-accent`/`bg-accent-2` elements, so they re-theme for free; a
+        library would need explicit color props wired to the same tokens,
+        which is real integration work for no benefit on charts this simple
+        (proportional bars and a calendar grid).
+      - **`BarChart` stacks label+value above a full-width bar** rather than
+        a fixed label column beside the bar — a fixed column either
+        truncates long genre/show names or squeezes the bar unpredictably
+        at 375px. Stacking guarantees the bar always gets the full row
+        width regardless of label length. Reused for genres, decades,
+        most-watched shows, AND the rating distribution — one component,
+        four sections, consistent with the "don't duplicate chart logic"
+        instinct the rest of this codebase already has for cards/hooks.
+      - **`CalendarHeatmap` scrolls horizontally inside its own container**
+        rather than shrinking cells to fit 375px — 53 weeks cannot fit a
+        phone width at a legible cell size, and GitHub's own mobile
+        contribution graph makes the identical trade. The page itself never
+        gains horizontal scroll, only this one element, matching the
+        general "wide content scrolls in its own container" rule this
+        project already follows for tables/code blocks elsewhere.
+      - **A DST bug caught before it ever ran, not after**: the first draft
+        of `computeHeatmap` walked from Jan 1 to Dec 31 by adding a fixed
+        86,400,000ms to a local `Date` each step — the exact hazard
+        `lib/watchlog/types.ts`'s `shiftDay` documents and exists to avoid
+        (a 23- or 25-hour local day around a DST transition means a fixed
+        millisecond step can land off local midnight). Caught while writing
+        the function, before it was ever tested wrong, by recognizing the
+        same pattern already fixed once in this codebase. Rewritten to
+        `date.setDate(date.getDate() + 1)`, which operates on calendar
+        fields and normalizes correctly regardless — verified directly with
+        a test walking the 2026 spring-forward date and asserting no
+        duplicate or missing day key.
+      - **Rating comparison uses the SAME fairness discipline as the
+        "Contrarian" badge**: a title only contributes to either average if
+        it has BOTH a user score and a TMDB rating, so "your average" and
+        "TMDB's average" are always computed over the identical set of
+        titles — never your full rated list against a mismatched
+        population.
+      - **"This year" can only come from the watch log; "all-time" can
+        only come from tracking state** — not a stylistic choice, a hard
+        data constraint. Tracking entries carry no per-event dates, so
+        "this year" is answered by `lib/watchlog`'s existing `totals()` +
+        `daysInYear()`; the watch log has no data before Phase 5 Step 1
+        shipped (no backfill, by design), so all-time totals use
+        `episodesWatchedFor`/movie-watched-count from tracking state
+        directly, which is exact and complete back to day one. The
+        dashboard says so explicitly under the episode/film counts rather
+        than leaving the "this year" gap implicit.
+      - **The gamification summary strip reuses `useXp`/`useStreak`/
+        `useBadges` directly** rather than recomputing level/streak/badge
+        counts a second time — only one of these hooks is ever mounted at
+        once, since Profile and `/profile/stats` are different routes, so
+        this is reuse, not duplicate work. Accepted, minor consequence: if a
+        level-up happens while `/profile/stats` is open, `useXp()`'s
+        internal "highest level seen" marker gets updated by THIS mount, so
+        the celebratory toast (which only Profile's `XpSummary` renders)
+        won't fire on a later Profile visit. Narrow enough (leveling up
+        specifically while on the stats page, before checking Profile) that
+        it wasn't worth a cross-page suppression mechanism.
+      - 25 new tests in `lib/stats/aggregate.test.ts` (every aggregation
+        function, including the DST-boundary heatmap case) — 297 total
+        across the suite. Two existing badge/stats test fixtures had a
+        latent bug caught while writing these (`options.year ?? 2000`
+        silently defaulted an explicitly-passed `year: null` back to 2000,
+        since `??` doesn't distinguish `null` from `undefined`) — it never
+        flipped a badges.test.ts assertion because the miscounted decade
+        still landed under the required threshold, but it was fixed in both
+        files rather than left latent now that it was visible.
+      - **Not independently verified in-browser this step**, same Chrome
+        extension gap as Steps 3 and 4. Verified instead: lint / tests /
+        build / typecheck all pass, and the actually-running dev server
+        served `/`, `/profile`, and `/profile/stats` all at 200 with zero
+        new errors in its log.
+- [ ] **Step 6** — PWA manifest + service worker
 
 ---
 
