@@ -6,12 +6,20 @@ Phase 6 Steps 3 and 4. The design and reasoning live in
 ```
 supabase/
   migrations/
-    20260801000001_initial_schema.sql   tables + RLS + policies, one transaction
-    20260806000001_usernames.sql        profiles.username + availability RPC
+    20260801000001_initial_schema.sql      tables + RLS + policies, one transaction
+    20260806000001_usernames.sql           profiles.username + availability RPC
+    20260807000001_sync_conflict_rules.sql LWW / LEAST / GREATEST triggers
   tests/
     00_local_supabase_shim.sql          auth schema/roles, LOCAL ONLY
-    01_rls_adversarial.sql              the attack, safe to run anywhere
+    01_rls_adversarial.sql              the RLS attack, safe to run anywhere
+    02_sync_conflict_rules.sql          the conflict-rule attack, safe anywhere
 ```
+
+> ⚠️ **`20260807000001` must be applied before sync is safe to use.** It is not
+> an optimization. Without those triggers every upsert simply overwrites, so a
+> device that has been offline for a week reconnects and its stale state wins —
+> the "last to sync wins" failure the whole design exists to prevent. Check 2 in
+> `02_sync_conflict_rules.sql` is exactly that scenario.
 
 Step 3 was schema only. **Step 4 (auth) is the first application code to read
 these tables** — it reads and writes `profiles`, and nothing else. The sync
@@ -97,6 +105,36 @@ policy rejects a row owned by someone else. That is genuine defence in depth,
 but it means the natural way to probe for this hole *hides* it. Probe with an
 unqualified `UPDATE ... SET user_id = <other>` or you will certify a broken
 policy as safe.
+
+## The conflict-rule test (Phase 6 Step 5)
+
+`tests/02_sync_conflict_rules.sql` attacks the triggers the same way
+`01_rls_adversarial.sql` attacks the policies — it tries to lose data and fails
+loudly if it succeeds.
+
+| # | Attack | Expected |
+|---|---|---|
+| 1 | A newer `client_updated_at` upserts over an older row | wins |
+| 2 | An **older** `client_updated_at` upserts over a newer row | **ignored** |
+| 3 | That stale write | no-op, does **not** raise |
+| 4 | Two devices marking *different* episodes | both land, no conflict |
+| 5 | Un-mark → older re-mark → newer re-mark | tombstone, held, resurrected |
+| 6 | An older score arriving beside a newer note | score kept, note untouched |
+| 7 | The same `watch_event` id inserted twice | one row |
+| 8 | `day_key` after a write | byte-identical, never re-derived |
+| 9 | A later `earned_at` for an existing badge | earliest kept |
+| 10 | A stale device's `highest_level_seen` | greatest kept |
+| 11 | **Negative control** — same attack on a table with no trigger | **older write wins** |
+
+**Check 3 is subtler than it looks.** A stale write must be silently skipped,
+not rejected. If it raised, the outbox would treat a correctly-ignored write as
+a failure and retry it forever, and the user would see a permanent sync error
+for something working exactly as designed.
+
+**Check 11 must pass by failing to protect.** It builds an unprotected table,
+runs the same attack, and asserts the newer write IS lost. Without it, checks
+1–10 would pass just as happily against a database where none of the triggers
+exist.
 
 ## Dashboard settings auth depends on (Phase 6 Step 4)
 

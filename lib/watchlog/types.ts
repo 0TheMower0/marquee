@@ -173,6 +173,32 @@ const KINDS: readonly WatchKind[] = [
 ];
 
 export interface WatchEvent {
+  /**
+   * Sync id (Phase 6 Step 5). **Optional, and its absence is meaningful.**
+   *
+   * Present on events recorded while signed in: a v4 UUID minted at write
+   * time and persisted here, so the id exists before the row ever reaches the
+   * outbox and a retried push re-sends the same id.
+   *
+   * Absent on every event recorded before the account existed. Those get a
+   * DETERMINISTIC v5 derived from `(userId, dayKey, array index)` at merge
+   * time — see `lib/sync/uuid.ts` — which is what makes a retried merge an
+   * `ON CONFLICT DO NOTHING` no-op instead of a second copy of the user's
+   * entire history.
+   *
+   * The merge then **writes that id back here**. Skipping the write-back
+   * duplicated the whole log on the merge's second run: the union step matches
+   * local events against server rows by id, and a local event with no id looks
+   * like a different event from the row it created. Once written, nothing
+   * depends on array indices staying stable any more.
+   *
+   * Added without a store migration on purpose: `isWatchEvent` does not reject
+   * unknown keys, so old records remain valid unchanged and there is no
+   * rewrite pass over the log. That matters more here than elsewhere — this
+   * store is append-only, and a migration that rewrote day records would be
+   * the one thing capable of shifting the array indices the v5 ids depend on.
+   */
+  id?: string;
   /** See WATCH_KIND. */
   k: WatchKind;
   /** `${mediaType}:${id}` — e.g. "tv:1396". */
@@ -224,6 +250,9 @@ export function isWatchEvent(value: unknown): value is WatchEvent {
 
   if (!KINDS.includes(event.k as WatchKind)) return false;
   if (typeof event.t !== "string" || event.t.length === 0) return false;
+  if (event.id !== undefined && (typeof event.id !== "string" || event.id.length === 0)) {
+    return false;
+  }
   if (!isOptionalNonNegativeInt(event.s)) return false;
   if (!isOptionalNonNegativeInt(event.e)) return false;
   if (event.b !== undefined && event.b !== 1) return false;

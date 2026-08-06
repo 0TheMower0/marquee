@@ -1,4 +1,6 @@
 import type { MediaType } from "@/lib/content/types";
+import { getSyncUser, recordWatchEvents } from "@/lib/sync/record";
+import { randomUuid } from "@/lib/sync/uuid";
 import type { WatchedEpisodes } from "@/lib/tracking/types";
 
 import { addedEpisodes } from "./diff";
@@ -107,12 +109,34 @@ export async function appendWatchEvents(events: WatchEvent[]): Promise<void> {
   if (events.length === 0) return;
 
   const day = localDayKey();
+
+  // Phase 6 Step 5. While signed in, every event gets a v4 UUID minted HERE,
+  // at write time, and persisted alongside it. That is what design doc §6.2
+  // means by "events written after sign-in are simpler": the id exists before
+  // the row ever reaches the outbox, so a retried push re-sends the same id
+  // and the insert is a no-op rather than a duplicate.
+  //
+  // Signed out, events are stored without an id exactly as before — the merge
+  // derives a deterministic v5 for those from (userId, dayKey, index). No
+  // store migration is involved either way; `id` is optional on WatchEvent.
+  const signedIn = getSyncUser() !== null;
+  const stamped = signedIn
+    ? events.map((event) => (event.id ? event : { ...event, id: randomUuid() }))
+    : events;
+
   try {
     const existing = (await watchLogStore.get(day)) ?? [];
-    await watchLogStore.set(day, [...existing, ...events]);
+    await watchLogStore.set(day, [...existing, ...stamped]);
   } catch (error) {
     console.warn("[watchlog] could not append events; continuing.", error);
+    // The append failed, so there is nothing to sync. Returning here preserves
+    // the rule that sync never carries what local storage does not hold.
+    return;
   }
+
+  // `day` is passed through verbatim and never re-derived downstream — design
+  // doc §2.3. Fire-and-forget, like the append itself.
+  void recordWatchEvents(day, stamped);
 }
 
 /* ---------------------------------------------------------------------------

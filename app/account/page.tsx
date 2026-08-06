@@ -4,6 +4,10 @@ import { redirect } from "next/navigation";
 
 import { PasswordForm, SignOutButton, UsernameForm } from "@/components/auth/account-forms";
 import { AuthUnavailable } from "@/components/auth/auth-page-shell";
+import { BackupPanel } from "@/components/sync/backup-panel";
+import { MergeSummaryPanel } from "@/components/sync/merge-summary-panel";
+import { NotesSyncToggle } from "@/components/sync/notes-sync-toggle";
+import { SyncStatusCard } from "@/components/sync/sync-status";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAuthProvider } from "@/lib/auth";
@@ -43,7 +47,15 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
         <SignOutButton variant="secondary" />
       </div>
 
+      {/* Sync status first: if writes are failing, that is the most urgent
+          thing on this page and must not sit below a username field. */}
+      <SyncStatusCard />
+      <MergeSummaryPanel />
+
       {withProfile.profile && <UsernameForm current={withProfile.profile.username} />}
+
+      <NotesSyncToggle />
+      <BackupPanel />
 
       {/* Rendered for OAuth accounts too, on purpose: setting a password adds
           email/password as a second way in, it does not replace GitHub. An
@@ -57,13 +69,14 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
         </CardHeader>
         <CardBody className="space-y-3">
           <p>
-            Everything you track still lives in this browser. Signing in does not
-            move it anywhere yet — cross-device sync is the next step of this
-            phase, and until then an account is just an identity waiting for one.
+            Everything you track lives in this browser first and always. Your
+            account is a copy that lets other devices catch up — never the
+            thing the app reads from, which is why Marquee works the same
+            offline and signed out.
           </p>
           <p>
-            Nothing you have tracked was uploaded, merged, or changed by signing
-            in.
+            Signing out leaves all of it on this device. Nothing is erased by
+            leaving.
           </p>
           <div className="flex flex-wrap gap-2 pt-1">
             <Button href="/profile" variant="outline" size="sm">

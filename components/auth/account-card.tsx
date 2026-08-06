@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
 import { UserIcon } from "@/components/ui/icons";
 
+import { SyncBadge } from "@/components/sync/sync-status";
+
 import { SignOutButton } from "./account-forms";
 
 /**
@@ -93,9 +95,17 @@ export async function AccountCard() {
           </div>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          {/* The compact indicator renders nothing while sync is healthy, so
+              this row only appears when there is something to say. Failure has
+              to be visible somewhere the user actually goes, and Profile is
+              visited far more often than /account. */}
+          <SyncBadge />
+        </div>
+
         <p className="text-body-sm text-fg-subtle">
-          Your library still lives on this device. Cross-device sync arrives in
-          the next step of this phase.
+          Your library lives on this device and syncs to your account in the
+          background.
         </p>
 
         <Button href="/account" variant="outline" size="sm">

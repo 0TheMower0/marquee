@@ -5,7 +5,9 @@ import "./globals.css";
 import { BottomNav } from "@/components/shell/bottom-nav";
 import { Footer } from "@/components/shell/footer";
 import { Sidebar } from "@/components/shell/sidebar";
+import { MergePrompt } from "@/components/sync/merge-prompt";
 import { RatingsProvider } from "@/lib/ratings";
+import { SyncProvider } from "@/lib/sync";
 import { TrackingProvider } from "@/lib/tracking";
 
 /**
@@ -84,9 +86,18 @@ export default function RootLayout({
                 RatingsProvider nests inside for the same reason — its only
                 readers (the title detail page, My Library's rated filter)
                 are both inside <main> too. */}
-            <TrackingProvider>
-              <RatingsProvider>{children}</RatingsProvider>
-            </TrackingProvider>
+            {/* SyncProvider sits OUTSIDE the two data providers: it sets the
+                module-level signed-in user that lib/sync/record.ts reads, and
+                that has to be in place before any mutation funnel can queue a
+                write. It reads the session client-side, so mounting it here
+                does NOT make routes dynamic — see the note in its own file
+                about why Step 4 kept getAccount() out of this layout. */}
+            <SyncProvider>
+              <MergePrompt />
+              <TrackingProvider>
+                <RatingsProvider>{children}</RatingsProvider>
+              </TrackingProvider>
+            </SyncProvider>
           </main>
           <Footer />
         </div>

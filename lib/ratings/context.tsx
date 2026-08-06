@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 import type { MediaType } from "@/lib/content/types";
+import { recordRatingDelete, recordRatingWrite } from "@/lib/sync/record";
 
 import { ratingsStore } from "./store";
 import { mergeRatingPatch, ratingKey } from "./types";
@@ -72,6 +73,14 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
       setEntries(previous);
       throw error;
     }
+
+    // Phase 6 Step 5, after the local write and never before — the same
+    // ordering rule the watch log follows. One local record becomes two queued
+    // rows (`ratings` and `rating_notes`), because design doc §7 keeps notes in
+    // their own table so a future sharing feature cannot reach them. No-ops
+    // when signed out.
+    if (next === null) void recordRatingDelete(mediaType, id);
+    else void recordRatingWrite(next);
   }
 
   const value: RatingsContextValue = {

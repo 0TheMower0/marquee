@@ -764,13 +764,24 @@ watched must not fail because a history record couldn't be appended. One
 read-modify-write per **day**, so a 13-episode season mark is one storage
 round trip, not 13 — with the same no-lock caveat as the multi-tab gap below.
 
-### Known gap: multi-tab
+### Multi-tab — partly closed in Phase 6 Step 5
 
-Two tabs writing the same namespace will clobber each other — there is no
-`storage`-event listener and no merge. Acceptable while everything is
-device-local. **Scheduled for Phase 6 Step 5**, where sync makes it worse (two
-tabs would carry two independent outboxes) and therefore has to fix it: see
-`docs/phase-6-sync-design.md` §5.
+**What is fixed:** the sync side. `lib/sync/engine.ts` takes a Web Lock
+(`ifAvailable`) around the outbox flush, so two tabs can no longer push the
+same records twice or interleave read-modify-write cycles on the same day
+record, and a `BroadcastChannel` tells other tabs when local storage changed
+under them. Web Locks releases automatically when a tab crashes, which a
+localStorage mutex cannot promise.
+
+**What is still open:** two tabs mutating the *same* record through the
+tracking or ratings context in the same instant still race, because each holds
+its own React state and neither re-reads before writing. The window is a single
+read-modify-write and each control disables itself while its own write is in
+flight, so the realistic path stays sequential. Signed in, the damage is
+bounded further — both writes reach the outbox and the server's LWW picks the
+later intent — but signed out, the loser is simply lost. Closing it properly
+means the contexts subscribing to the BroadcastChannel and re-reading, which is
+a change to those contexts rather than to sync.
 
 ---
 
@@ -1311,6 +1322,70 @@ A Server Component render cannot write a refreshed token (no `Set-Cookie`
 after streaming starts), so proxy is the only place an ordinary page
 navigation can persist one. Delete it and you get intermittent random logouts
 under refresh-token rotation, not an obvious failure.
+
+## Sync — `lib/sync/`
+
+```
+lib/sync/
+  uuid.ts       v4 + deterministic v5              [pure, tested]
+  wire.ts       local <-> server row translation   [pure, tested]
+  merge.ts      the first-login merge              [pure, tested]
+  reconcile.ts  steady-state LWW on pull           [pure, tested]
+  outbox.ts     the offline queue
+  state.ts      cursors, merge record, notes toggle
+  backend.ts    SupabaseSyncBackend + nullSyncBackend
+  engine.ts     sequencing and I/O only
+  record.ts     the seam mutation funnels call
+  context.tsx   SyncProvider + useSync()
+```
+
+**Local storage is a complete replica and every UI read hits it.** The server
+is a convergence point, never the read path. Nothing in this package is on the
+critical path of rendering anything.
+
+### The pure/impure split is the safety property
+
+`merge.ts` and `reconcile.ts` decide what data *becomes*, take snapshots, and
+return plans. They touch no storage and no network, so every rule is testable
+against plain objects. `engine.ts` does the sequencing and owns no decisions.
+Keep it that way: this is the one operation in the app that can destroy years
+of history, and "we tested it against a real database once" does not survive a
+refactor.
+
+### Two different merge rules, one principle
+
+| | rule | why |
+|---|---|---|
+| First-login merge | union / max | joins two histories that never knew about each other, so "later" is meaningless |
+| Steady-state pull | per-record LWW on `client_updated_at` | reconciles two views of one shared history, where a later edit genuinely supersedes |
+
+### Three things that are easy to get wrong
+
+1. **Write the derived event id back.** Pre-account log events get a
+   deterministic v5; if it isn't persisted onto the local event, the merge
+   duplicates the entire watch log on its second run. A replay test pins this.
+2. **The pending-write guard.** A pull must never overwrite local state still
+   sitting in the outbox, or an offline mark visibly vanishes and then returns.
+3. **`CURSOR_COLUMN` must match the indexed column.** `updated_at` on every
+   table. `if not exists` on an index matches the NAME, not the definition, so
+   a mismatched index silently stays wrong.
+
+### Conflict rules are in the database
+
+Triggers, not client logic: a read-compare-write is a race, costs a round trip
+per record, and PostgREST is public so client-side rules are bypassable. Stale
+writes are skipped silently — raising would make the outbox retry forever a
+write that is correctly being ignored. Trigger names must keep sorting
+`clamp` before `lww`. See `supabase/tests/02_sync_conflict_rules.sql`, which
+attacks them rather than asserting they exist.
+
+### Backups
+
+Taken before any merge, **never garbage-collected**, and a failed backup write
+**aborts the merge** — the only place in this codebase where a failed local
+write must stop the operation rather than degrade. `restoreSnapshot` is
+additive on purpose: it does not delete records created since the snapshot,
+because an undo that destroys newer work is worse than the bug it fixes.
 
 ## Phase roadmap
 
@@ -2200,15 +2275,18 @@ range encoding is deliberately NOT preserved server-side).
         `AccountCard` is a Server Component inside its own `<Suspense>` on
         `/profile` — same "never block the page on a secondary source" rule the
         OMDb ratings row follows.
-      - **Every session mutation is a Server Action; nothing Supabase-related
-        runs in the browser at all.** Cookies can only be written from a Server
-        Function or Route Handler, so a browser-SDK `signInWithPassword` would
-        produce a session the *browser* knows about and the next server render
-        does not — which is the "works correctly with Server Components"
-        requirement failing. Measured consequence: `grep -ri supabase
-        .next/static` returns **zero files**. A `browser-client.ts` was written
-        and then **deleted** on discovering nothing imported it; Step 5 can add
-        one when sync actually needs it.
+      - **Every session mutation is a Server Action.** Cookies can only be
+        written from a Server Function or Route Handler, so a browser-SDK
+        `signInWithPassword` would produce a session the *browser* knows about
+        and the next server render does not — which is the "works correctly
+        with Server Components" requirement failing. That rule still holds.
+        **Superseded in Step 5:** at the end of Step 4 no Supabase code reached
+        the browser at all (`grep -ri supabase .next/static` returned zero
+        files) and `browser-client.ts` was deleted as dead. Step 5 restored it,
+        because sync reads localStorage and must work offline — see the Step 5
+        notes. Auth writes are still server-only; the browser client only
+        *reads* the session and authorizes data calls, and the service role key
+        still never leaves the server.
       - **`proxy.ts` exists solely to refresh the session, and CLAUDE.md needs
         the distinction spelled out because Step 2 quotes the same doc line to
         argue the opposite.** Rate limiting must not live in proxy because an
@@ -2319,9 +2397,156 @@ range encoding is deliberately NOT preserved server-side).
         the anonymous provider's full contract) — 356 total across the suite.
 - [ ] **Step 4b** — The first-login merge: pre-merge backup, the merge itself,
       and the post-merge summary
-- [ ] **Step 5** — Ongoing sync: outbox, pull cursor, conflict rules, multi-tab
-      coordination (which also closes the multi-tab clobbering gap documented
-      in the storage section)
+- [x] **Step 5** — Sync (`lib/sync/`, `components/sync/`, and one migration).
+      The first-login merge, steady-state conflict resolution, the offline
+      outbox, and multi-tab coordination — which also closes the clobbering gap
+      the storage section has documented since Phase 2.
+      - **The riskiest logic is pure and therefore tested.** `merge.ts` and
+        `reconcile.ts` take snapshots and return plans; they touch no storage
+        and no network. `engine.ts` is the part that is hard to test, so it was
+        kept to sequencing and I/O with no decisions of its own. 62 tests cover
+        overlapping ranges, a title tracked differently on each side,
+        disagreeing scores, independently written notes, badges earned on one
+        side only, and a full merge replay.
+      - **The merge is additive-only.** No branch removes a local title,
+        episode, rating, note, badge, or log event. Union for episodes and
+        events, max-progress for status, LEAST for badge dates, GREATEST for
+        XP, later-wins for scores, and **concatenation** for notes. The worst
+        outcome it can produce is a duplicate or a resurrection, which is the
+        guarantee the brief asked for.
+      - **A real duplication bug, caught by a replay test rather than by
+        review.** Pre-account watch-log events get a deterministic UUIDv5 from
+        `(userId, dayKey, index)` so a retried merge is a no-op. That was
+        implemented — and the merge still DOUBLED the entire watch log on its
+        second run, because the derived id was not written back onto the local
+        event. The union step matches local against remote by id, and a local
+        event with no id looks like a different event from the row it created.
+        `hasRepeatedMark` would then have reported rewatches that never
+        happened. Fixed by persisting the derived id; that also removes the
+        dependency on array-index stability after the first merge.
+      - **The v5 implementation is pinned by the published RFC 4122 vector**
+        (`uuidV5("www.example.com", DNS)`), not just by self-consistency — a
+        refactor of the bit-twiddling would otherwise silently re-derive every
+        pre-account event id in existence and re-upload the user's whole
+        history under new ids.
+      - **Conflict rules live in Postgres triggers, not in the client.** A
+        read-compare-write in the sync client is a race (another device can
+        commit between the read and the write), costs a round trip per record,
+        and is bypassable — PostgREST is a public API. As BEFORE triggers the
+        comparison happens inside the writing statement, under the row lock,
+        for every writer. A stale write is skipped SILENTLY (`return null`)
+        rather than rejected: raising would make the outbox retry forever a
+        write that is correctly being ignored.
+      - **Trigger ORDER is load-bearing and depends on the names.** Postgres
+        fires same-event triggers alphabetically, so `<table>_clamp` (which
+        pins a future-dated `client_updated_at` to `now()`) must sort before
+        `<table>_lww`. It does. Renaming either without re-checking would let a
+        device with a fast clock win using the very timestamp the clamp exists
+        to reject.
+      - **Verified against a real PostgreSQL 18, not asserted.**
+        `supabase/tests/02_sync_conflict_rules.sql` attacks the triggers: 11
+        checks including an older write trying to overwrite a newer one, an
+        older re-mark trying to resurrect a tombstone, and a **negative control
+        that must pass by failing to protect** — an unprotected table where the
+        newer write IS lost. Without check 11, checks 1–10 would pass against a
+        database with no triggers at all. Exit code 0.
+      - **A second real bug, caught by applying the migration and reading the
+        NOTICEs.** The draft added a `watch_events (user_id, created_at)` index
+        with `if not exists`, on the assumption that an append-only table has
+        no `updated_at`. It has one, the index NAME was already taken, so the
+        statement was silently skipped — and the sync client was querying
+        `created_at`, making that pull a sequential scan over every event the
+        user had ever logged. `if not exists` matches the name, never the
+        definition. Every table now uses `updated_at`, and `CURSOR_COLUMN` in
+        `backend.ts` must keep matching the indexed column exactly.
+      - **The pending-write guard is what makes offline safe.** Every
+        reconcile function takes the `client_updated_at` of any un-pushed local
+        write for the same record and ignores the server row if it is not
+        newer. Without it: mark an episode offline, reconnect, a pull lands
+        before the flush, the server's older state overwrites local, and the
+        mark vanishes from the screen while still sitting in the outbox — where
+        it reappears minutes later.
+      - **Episodes have no per-episode local timestamp to compare against**,
+        because the range encoding structurally cannot hold one — that is the
+        65x storage win. It does not need one: anything already pushed is on
+        the server and the server's LWW resolved it, so a row coming back IS
+        the resolved answer. The only state the server does not know about is
+        the outbox, which is exactly what the guard covers.
+      - **`reconcileTitle` carries local episodes across a title update.**
+        Episodes arrive from their own table, so a status change from another
+        device must not bring `watchedEpisodes: {}` with it. Missing this would
+        wipe a whole show's progress on a one-field update.
+      - **Two outbox modes, and the distinction falls out of the key rather
+        than a flag.** State records key on their natural key so repeated
+        writes coalesce; `watch_events` keys on its UUID so nothing ever
+        coalesces. Flush is per-record and grouped per table in `SYNC_TABLES`
+        order — `watched_episodes` has an FK to `tracked_titles`, and pushing
+        an episode first fails with a 23503 which `classify()` treats as
+        permanent, parking a good write in the error state forever.
+      - **Failure is visible, and success is not.** `phase: "offline"` is
+        informational (queued writes are the system working); `phase: "error"`
+        is `role="alert"` with danger tokens and a retry, because it will not
+        resolve by waiting. Success gets one calm line — a permanent green
+        banner trains people to ignore the spot where the red one appears.
+        Retryable vs. permanent is decided by SQLSTATE: 23xxx / 42501 / 22P02
+        and the PostgREST schema-drift codes are permanent, everything else
+        retries with capped exponential backoff.
+      - **Multi-tab, finally.** A `BroadcastChannel` announces local changes
+        and the Web Locks API (`ifAvailable`, so a second tab skips rather than
+        queueing) makes the flush exclusive. Web Locks releases automatically
+        when a tab crashes, which a localStorage mutex cannot promise. Where
+        unavailable the task runs unguarded — sync is idempotent throughout, so
+        the failure mode is duplicated work, not corruption.
+      - **Backups are never garbage-collected**, per §6.1, and
+        `takePreMergeBackup` **throws and aborts the merge** if it cannot
+        write. That is the one place in this codebase where a failed local
+        write must stop the operation instead of degrading — everywhere else a
+        failed write costs a nicety; here it removes the only way back.
+        `restoreSnapshot` is deliberately additive: it restores what the
+        snapshot holds and does NOT delete anything created since, because an
+        "undo" that destroys newer work is worse than the bug it fixes. The UI
+        says so rather than promising a clean rollback.
+      - **The merge prompt is not about conflicts.** It appears only when both
+        sides are non-empty, and it exists for the single irreversible failure
+        in the design: signing into the WRONG account and uploading your
+        library into someone else's. It leads with the two counts, because
+        "this device has 214 titles; this account has 38" is the sentence that
+        makes someone realise, in a way "merge your data?" never would.
+        `autoFocus` lands on the SAFE action.
+      - **`titleOf` read `.title` when `TitleSummary` calls it `.name`** — it
+        type-checked (the server row's `summary` is `unknown`) and silently
+        made every entry in the user-visible merge summary fall back to a raw
+        provider id. Caught only by building a real `TitleSummary` in the test
+        fixtures instead of a loose object literal.
+      - **Row shapes are `type` aliases, not `interface`s**, and that is
+        load-bearing: TypeScript gives aliases an implicit index signature but
+        not interfaces, so only the alias form is assignable to the
+        `Record<string, unknown>` the outbox and `push` take.
+      - **`browser-client.ts` is back**, after Step 4 deleted it as dead. Sync
+        reads localStorage and must flush on reconnect, so routing it through
+        Server Actions would make every queued write depend on our server as
+        well as Supabase, and a 300-row batch would cross two hops. Auth writes
+        remain server-only; the browser client only reads the session. The
+        service role key still never leaves the server.
+      - **`SyncProvider` reads the session client-side**, which is what lets it
+        mount in the root layout without undoing Step 4's rendering decision —
+        verified in the build output: Home, Search, Library and stats are still
+        **static**. It re-reads on mount, on `onAuthStateChange`, and on
+        pathname change, because a Server Action setting a cookie fires no
+        client-side auth event.
+      - **A `set-state-in-effect` violation, same rule as Phase 5 Step 4**:
+        resetting the status on sign-out was a synchronous `setState` in an
+        effect. Fixed by deriving it — "signed out" and "disabled" are the same
+        state, so it was state that did not need to exist.
+      - 62 new tests (`merge.test.ts`, `reconcile.test.ts`) plus 11 database
+        checks — 418 total across the suite.
+      - **Not verified in a browser.** The Chrome extension has been
+        disconnected for six sessions. What WAS verified: the conflict rules
+        against a real PostgreSQL 18 with a negative control, all three
+        migrations applying cleanly in order, lint / typecheck / 418 tests /
+        build, and the static/dynamic split holding. **Still owed**: a live
+        two-device round trip against the real project — sign in on a second
+        device, edit both sides offline, reconnect, and confirm convergence.
 - [ ] **Step 6** — Spoiler-safe comments, shared lists
 
 ---

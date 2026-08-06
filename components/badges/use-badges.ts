@@ -13,6 +13,7 @@ import {
   type EarnedBadgeRecord,
 } from "@/lib/badges";
 import { useRatings } from "@/lib/ratings";
+import { recordBadgeEarned } from "@/lib/sync/record";
 import { useTracking } from "@/lib/tracking";
 import {
   byHourOfDay,
@@ -143,9 +144,17 @@ export function useBadges(): UseBadgesResult {
     // re-evaluates and re-persists next time), so this always resolves.
     Promise.all(
       evaluation.newlyEarnedIds.map((id) =>
-        badgesEarnedStore.set(id, { earnedAt: now }).catch((error) => {
-          console.warn(`[badges] could not persist "${id}" as earned.`, error);
-        }),
+        badgesEarnedStore
+          .set(id, { earnedAt: now })
+          // Phase 6 Step 5: queue for sync only after the local write lands,
+          // inside the `then` rather than alongside it, so a badge that failed
+          // to persist locally is never uploaded. The server takes
+          // LEAST(earned_at), so a badge already earned earlier on another
+          // device keeps its true date.
+          .then(() => recordBadgeEarned(id, now))
+          .catch((error) => {
+            console.warn(`[badges] could not persist "${id}" as earned.`, error);
+          }),
       ),
     ).then(() => {
       setLedger((prev) => ({ ...prev, ...updates }));

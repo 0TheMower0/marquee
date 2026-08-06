@@ -12,6 +12,11 @@ import {
   movieEvent,
   titleEvent,
 } from "@/lib/watchlog";
+import {
+  recordEpisodeChanges,
+  recordTitleDelete,
+  recordTitleWrite,
+} from "@/lib/sync/record";
 
 import {
   deriveStatus,
@@ -226,6 +231,13 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
         summary.mediaType === "movie" ? movieEvent(summary.id) : titleEvent(summary.id),
       ]);
     }
+
+    // Phase 6 Step 5. Same placement and the same rule as the log append
+    // above: AFTER the local write succeeded, never before. Queuing a write
+    // that failed locally would upload state this device does not have, and
+    // the next pull would install it — resurrecting a change the user never
+    // actually made. No-ops when signed out.
+    void recordTitleWrite(next);
   }
 
   /**
@@ -311,6 +323,19 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
     void logEpisodeMutation(summary.mediaType, summary.id, currentWatched, nextWatched, {
       bulk: options.bulk,
     });
+
+    // Phase 6 Step 5. The same before/after pair the log diffs is exactly what
+    // sync needs: added episodes become rows, removed ones become tombstones.
+    // One funnel, so every operation — including ones added later — is covered
+    // without per-operation sync code.
+    void recordTitleWrite(next);
+    void recordEpisodeChanges(
+      "tv",
+      summary.id,
+      currentWatched,
+      nextWatched,
+      now,
+    );
   }
 
   async function remove(id: string, mediaType: MediaType) {
@@ -328,6 +353,9 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
       setEntries(previous);
       throw error;
     }
+
+    // A tombstone rather than a delete instruction — see recordTitleDelete.
+    void recordTitleDelete(previous[key]);
   }
 
   const value: TrackingContextValue = {

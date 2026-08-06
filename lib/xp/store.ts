@@ -1,4 +1,5 @@
 import { defineStore } from "@/lib/storage";
+import { recordHighestLevel } from "@/lib/sync/record";
 
 /**
  * One record, holding the highest level the level-up celebration has already
@@ -51,5 +52,12 @@ export async function setHighestLevelSeen(level: number): Promise<void> {
     await seenLevelStore.set(KEY, { highestLevelSeen: level });
   } catch (error) {
     console.warn("[xp] could not persist highest level seen.", error);
+    return;
   }
+
+  // Phase 6 Step 5. Synced so a user who levels up on their phone does not see
+  // the celebration a second time on their laptop. The server takes
+  // GREATEST(), so this can only ever move forward — an offline device with a
+  // stale marker cannot roll it back and re-fire celebrations already seen.
+  void recordHighestLevel(level);
 }
