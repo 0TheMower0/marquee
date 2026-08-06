@@ -35,4 +35,22 @@ export const RATE_LIMITS = {
    * one who spends it.
    */
   ratings: { name: "ratings", limit: 15, windowSeconds: 60 },
+
+  /**
+   * The Phase 6 Step 4 auth Server Actions: sign in, sign up, password reset,
+   * resend, and the username availability check.
+   *
+   * Supabase runs its own auth rate limits, so this is not the only guard —
+   * but two of these are reachable while signed OUT and neither is protected
+   * by Supabase's *email* limits. `username_available` is the sharper one: it
+   * is a deliberate existence oracle for usernames (any signup form is), and
+   * without a limit it is a free, unauthenticated endpoint for enumerating
+   * every username on the deployment.
+   *
+   * 10/min is generous for a human filling in one form — a mistyped password
+   * three times, plus availability checks while picking a name — and turns
+   * credential stuffing or username enumeration into something too slow to be
+   * worth running.
+   */
+  auth: { name: "auth", limit: 10, windowSeconds: 60 },
 } as const satisfies Record<string, RateLimitRule>;

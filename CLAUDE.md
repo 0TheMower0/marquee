@@ -1220,6 +1220,98 @@ w500 changes mean chroma by <0.001, so no resample-kernel tuning is warranted.
 
 ---
 
+## Accounts — `lib/auth/`
+
+```
+lib/auth/
+  types.ts        AuthUser, AuthProfile, AuthAccount, SignUpInput, ...
+  errors.ts       AuthError + kinds + SAFE_AUTH_MESSAGE
+  provider.ts     the AuthProvider interface
+  username.ts     format rules + reserved words          [pure, tested]
+  form-state.ts   AuthActionState + IDLE_AUTH_STATE      [NOT "use server"]
+  actions.ts      "use server" — the client seam
+  anonymous/      anonymousAuthProvider — "never signed in"
+  supabase/
+    index.ts      supabaseAuthProvider                   [server-only]
+    map-error.ts  GoTrue error -> AuthErrorKind          [pure, tested]
+  index.ts        getAuthProvider() / getAccount()       [server-only]
+
+lib/supabase/
+  public-env.ts   URL + anon key, public by design
+  server-env.ts   service role key                       [server-only]
+  server-client.ts  per-request client                   [server-only]
+
+proxy.ts          session refresh, and nothing else
+app/auth/callback/route.ts   OAuth return + email links
+```
+
+**Signing in is an upgrade, never a gate.** Nothing in the app is behind it.
+The three account-aware surfaces (`AccountCard` on Profile, `/account`, the
+auth pages) each say so in copy, because that is the only way a user learns it.
+
+### The three rules that shape everything else
+
+1. **Local reads never touch the network.** `lib/tracking`, `lib/ratings`,
+   `lib/watchlog`, `lib/badges`, `lib/xp` are untouched by this layer. An
+   account is an identity; it is not yet a data path (Step 5).
+2. **Auth is read server-side, written server-side.** Sessions are cookies,
+   cookies are only writable from a Server Function or Route Handler, and a
+   session the browser knows about but the server doesn't is the bug this
+   avoids. Consequence: **no Supabase code ships to the browser** — `grep -ri
+   supabase .next/static` is empty.
+3. **Unconfigured is a supported mode, structurally.** `getAuthProvider()`
+   returns the anonymous provider, whose `getAccount()` is `null` — the state
+   every caller already handles.
+
+### Where auth may be read, and where it may not
+
+**Never in `app/layout.tsx`.** `cookies()` is request-time, so one call there
+makes every route dynamic — Home, title pages, all of it — to render a chrome
+element most visitors don't use. Verified in build output: with Supabase
+configured, only `/account`, `/profile`, `/signin`, `/signup` are dynamic;
+`/`, `/search`, `/library`, `/profile/stats` stay static.
+
+`AccountCard` is a Server Component in its own `<Suspense>` on `/profile`, so
+a slow auth round trip can't delay the XP/streak/badge cards that need no
+server at all.
+
+### Usernames
+
+Format in **both** `username.ts` and a Postgres CHECK (the app can be
+bypassed). Uniqueness **only** in the `lower(username)` unique index — never
+select-then-insert, which is a race; a 23505 is an ordinary outcome. Reserved
+words **only** in the app layer, which is a stated, accepted asymmetry.
+
+Stored as typed, unique case-insensitively (GitHub's model). ASCII-only, and
+that is a limitation not an oversight: Unicode usernames need
+confusable-script normalization to not be an impersonation vector, and
+half-doing that is worse than not doing it. Display names are unrestricted.
+
+### Account enumeration is resisted in four places
+
+Vague `invalid_credentials`; `email_not_confirmed` folded into it; password
+reset that resolves for unknown addresses; and no error for an
+already-registered signup email. Each is a place a well-meaning "better error
+message" would undo the protection — the tests pin the second one specifically.
+
+There is an availability RPC for **usernames** and deliberately none for
+**emails**: a username is a public handle, an address is not.
+
+### `proxy.ts` — and why rate limiting is still not allowed in it
+
+Both files quote the same Next documentation line to reach opposite
+conclusions, so the distinction matters:
+
+| | needs | verdict |
+|---|---|---|
+| rate limiting | a counter surviving *between* requests | ✗ proxy — that's shared state, which proxy can't promise |
+| session refresh | only *this* request's cookies | ✓ proxy — and nowhere else works |
+
+A Server Component render cannot write a refreshed token (no `Set-Cookie`
+after streaming starts), so proxy is the only place an ordinary page
+navigation can persist one. Delete it and you get intermittent random logouts
+under refresh-token rotation, not an obvious failure.
+
 ## Phase roadmap
 
 | Phase | Scope |
@@ -1228,8 +1320,8 @@ w500 changes mean chroma by <0.001, so no resample-kernel tuning is warranted.
 | 2 *(done)* | Search, My Library, watchlist/watched state |
 | 3 *(done)* | Episode-level progress, "Up Next" engine |
 | 4 *(done)* | Rich detail pages with artwork-derived dynamic theming |
-| **5** *(current)* | XP, levels, streaks, badges, stats dashboard; PWA manifest + service worker |
-| 6 | API rate limiting, Supabase accounts + sync, spoiler-safe comments, shared lists — design in `docs/phase-6-sync-design.md` |
+| 5 *(step 6 outstanding)* | XP, levels, streaks, badges, stats dashboard; PWA manifest + service worker |
+| **6** *(current)* | API rate limiting, Supabase accounts + sync, spoiler-safe comments, shared lists — design in `docs/phase-6-sync-design.md` |
 | 7 | CSV importers (Trakt/Letterboxd/TV Time), new-episode notifications |
 | 8 | Year in Review |
 
@@ -2079,8 +2171,154 @@ range encoding is deliberately NOT preserved server-side).
         Importing `server-env.ts` from a Client Component was then tried
         deliberately: the build failed with `'server-only' cannot be imported
         from a Client Component module` plus the full import trace.
-- [ ] **Step 4** — Auth, plus the first-login merge: pre-merge backup, the
-      merge itself, and the post-merge summary
+- [x] **Step 4a** — Authentication (`lib/auth/`). **The first-login merge is
+      deliberately NOT in this step** — the design doc's Step 4 was split on
+      instruction, so an identity exists before anything moves data. Signing in
+      today changes nothing about where a user's library lives, and both
+      `/account` and the Profile card say so in as many words.
+      - **`AuthProvider`, selected exactly like `ContentProvider`.**
+        `getAuthProvider()` returns `supabaseAuthProvider` when
+        `NEXT_PUBLIC_SUPABASE_URL`/`ANON_KEY` are present and
+        `anonymousAuthProvider` otherwise. The anonymous one is **production
+        behaviour, not a test double**: `getAccount()` returns `null`, which
+        every account-aware surface already handles, so the whole feature is
+        *inert* rather than *broken* unconfigured — no
+        `isSupabaseConfigured()` checks scattered through the UI.
+      - **One deliberate difference from `getContentProvider()`**: a typo'd
+        `NEXT_PUBLIC_CONTENT_PROVIDER` throws, because silently serving mock
+        data when you asked for TMDB is a lie. Absent Supabase config does NOT
+        throw, because it is this app's documented default state. Two
+        similar-looking selectors, two different rules.
+      - **No auth read in the root layout, and that was the load-bearing
+        rendering decision.** `cookies()` is a request-time API, so calling
+        `getAccount()` in `app/layout.tsx` would opt *every* route into dynamic
+        rendering for a chrome element most visitors never use. Verified
+        against the real build output rather than assumed: with Supabase
+        configured, `/`, `/search`, `/library`, `/profile/stats` and
+        `/forgot-password` stay **static**, and only `/account`, `/profile`,
+        `/signin`, `/signup` go dynamic. The cost paid instead is that
+        `AccountCard` is a Server Component inside its own `<Suspense>` on
+        `/profile` — same "never block the page on a secondary source" rule the
+        OMDb ratings row follows.
+      - **Every session mutation is a Server Action; nothing Supabase-related
+        runs in the browser at all.** Cookies can only be written from a Server
+        Function or Route Handler, so a browser-SDK `signInWithPassword` would
+        produce a session the *browser* knows about and the next server render
+        does not — which is the "works correctly with Server Components"
+        requirement failing. Measured consequence: `grep -ri supabase
+        .next/static` returns **zero files**. A `browser-client.ts` was written
+        and then **deleted** on discovering nothing imported it; Step 5 can add
+        one when sync actually needs it.
+      - **`proxy.ts` exists solely to refresh the session, and CLAUDE.md needs
+        the distinction spelled out because Step 2 quotes the same doc line to
+        argue the opposite.** Rate limiting must not live in proxy because an
+        in-process counter is shared state, and proxy is exactly where the
+        framework says state isn't dependable. Session refresh needs *only this
+        request's* cookies, so none of that warning applies — and it cannot
+        live anywhere else, since a Server Component render cannot write the
+        refreshed token back. Without it: silent random logouts under refresh
+        -token rotation. Guarded twice for the anonymous path — unconfigured
+        returns immediately, and so does any request with no `sb-` cookie.
+        Measured: 4–6ms on the skip path, 13ms when a session cookie is
+        actually present.
+      - **`getUser()`, never `getSession()`, on the server.** `getSession()`
+        returns whatever the cookie decodes to *without verifying the
+        signature*, so server-side it is a user-supplied claim rather than a
+        fact — anyone could hand-craft a cookie asserting any user id.
+      - **Usernames: three rules, three enforcement points, on purpose.**
+        Format is enforced in `lib/auth/username.ts` *and* as a Postgres CHECK
+        (the app can be bypassed; a direct PostgREST call cannot bypass the
+        column constraint). Uniqueness is enforced **only** by a unique index
+        on `lower(username)` — never by select-then-insert, which is a race —
+        so a 23505 is treated as an ordinary outcome, not an exception. The
+        reserved-word list is enforced **only** in the app layer, and that
+        asymmetry is stated plainly rather than hidden: a direct API call could
+        claim `admin`. The list is product policy that changes, and a CHECK
+        constraint would need a migration per edit, including one that could
+        fail because a row already holds the newly-reserved name. Revisit if
+        usernames ever become publicly addressable (`/@name`).
+      - **The reserved list includes every current and plausible route
+        segment** (`search`, `library`, `profile`, `settings`, `signin`, …).
+        Reserving them now is free; reserving them *later* means taking a name
+        off someone. A test asserts each current route is in the list.
+      - **No `security definer` trigger creates profile rows.** The obvious
+        design — a trigger on `auth.users` — collides with `force row level
+        security` on `profiles` and would need a privileged bypass path to
+        audit. Instead `ensureProfile()` runs **as the user**, under the
+        ordinary `profiles_insert_self` policy, on the first authenticated
+        entry point. The whole RLS model stays uniform. The cost is that the
+        row appears one request after the user does, which is exactly why
+        `AuthAccount.profile` is nullable.
+      - **Signing up can never fail because a username was taken.** The
+        availability check is a courtesy; between it and the eventual insert
+        the name can go. `ensureProfile()` tries the wanted name, then falls
+        back to obviously-generated `user_<8 hex>` placeholders that the
+        account page invites renaming. A 23505 also covers the primary key, so
+        it re-selects rather than inspecting a constraint name — a concurrent
+        request having already created the row is a different fix from a name
+        collision.
+      - **Account enumeration is resisted in four separate places, and each is
+        a place a later "improvement" would undo it.** (1)
+        `invalid_credentials` copy is vague, matching what GoTrue itself
+        returns. (2) `email_not_confirmed` is folded INTO
+        `invalid_credentials`, because distinguishing it says "this address IS
+        registered" through a side door — paid for by always offering "resend
+        confirmation" rather than only when we can prove it's needed. (3)
+        `requestPasswordReset` resolves for unknown addresses and the copy is
+        worded true either way. (4) An already-registered email is **not**
+        reported as an error at signup; GoTrue deliberately returns a fake user
+        with empty `identities` there, and detecting that would hand back the
+        disclosure it went out of its way to withhold. There is deliberately no
+        availability RPC for email — a username is a public handle, an address
+        is not.
+      - **`username_available` is the one privileged surface**: `security
+        definer`, `set search_path = ''`, fully-qualified references, returning
+        a bare boolean. Needed because `profiles` is `authenticated`-only and a
+        sign-up form is by definition not authenticated. It is an existence
+        oracle by construction, which is why a new `RATE_LIMITS.auth` rule
+        (10/min) covers it and every other auth action. Verified end to end
+        against the running server: exactly 10 allowed, then refused with a
+        decrementing `retryAfterSeconds`.
+      - **A real bug only a *configured* production build could find.**
+        `AuthActionState`/`IDLE_AUTH_STATE` were exported from `actions.ts`,
+        which carries `"use server"` — where every export is compiled into a
+        callable server endpoint reference, so a plain object arrives on the
+        client as `undefined`. Types do not catch it (both sides are correctly
+        typed; the value goes missing at the module boundary), and the
+        *unconfigured* build passed because the auth pages render "accounts
+        unavailable" and never mount a form. Fixed by moving constants to
+        `lib/auth/form-state.ts`; `actions.ts` now exports functions only.
+      - **The sentinel grep needed a real positive control, and the first one
+        proved nothing.** `SUPABASE_SERVICE_ROLE_KEY`'s sentinel: 0 hits in
+        `.next/static`, 0 in `.next/server`. But the anon-key sentinel was also
+        0 — not a broken grep, a *stronger* result than expected: no Supabase
+        code reaches the browser at all this step. A known-present string
+        ("Continue with GitHub") was used as the control instead, and matched.
+        A deliberate client import of `@/lib/auth` failed the build with the
+        full trace through `lib/auth/index.ts` → `lib/auth/supabase/index.ts` →
+        `lib/supabase/server-client.ts`.
+      - **Verified signed out in both modes, every route 200, zero server
+        errors** — including with a garbage `sb-` cookie, which engages the
+        proxy, fails to reach the auth server, and still serves the page.
+        `/account` redirects to `/signin?next=%2Faccount` (as a streamed 307
+        inside an HTTP 200 — the same documented Next behaviour CLAUDE.md
+        already notes for `notFound()`).
+      - **Not verified in a real browser, and not against a real Supabase
+        project.** The Chrome extension was disconnected again (fourth session
+        running), and `supabase start` needs Docker, which isn't installed —
+        so no live auth server, no real OAuth round trip, no real email. What
+        was exercised: every route over HTTP in both configured and
+        unconfigured modes, the proxy's engage/skip paths, the rate limiter end
+        to end, the build's static/dynamic split, the credential boundary, and
+        36 unit tests over the pure logic. **Still owed**: a real sign-up →
+        confirm → sign-in → rename → sign-out round trip against a live
+        project, and the 375px visual pass.
+      - 36 new tests in `lib/auth/auth.test.ts` (username policy incl. every
+        rejection boundary and the exact-vs-prefix reserved check, the Supabase
+        error mapping incl. the deliberate `email_not_confirmed` collapse, and
+        the anonymous provider's full contract) — 356 total across the suite.
+- [ ] **Step 4b** — The first-login merge: pre-merge backup, the merge itself,
+      and the post-merge summary
 - [ ] **Step 5** — Ongoing sync: outbox, pull cursor, conflict rules, multi-tab
       coordination (which also closes the multi-tab clobbering gap documented
       in the storage section)

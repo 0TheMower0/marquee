@@ -1,16 +1,21 @@
 # Supabase — schema, RLS, and the adversarial test
 
-Phase 6 Step 3. Schema only: no application code reads these tables yet.
-The design and reasoning live in [`../docs/phase-6-sync-design.md`](../docs/phase-6-sync-design.md).
+Phase 6 Steps 3 and 4. The design and reasoning live in
+[`../docs/phase-6-sync-design.md`](../docs/phase-6-sync-design.md).
 
 ```
 supabase/
   migrations/
     20260801000001_initial_schema.sql   tables + RLS + policies, one transaction
+    20260806000001_usernames.sql        profiles.username + availability RPC
   tests/
     00_local_supabase_shim.sql          auth schema/roles, LOCAL ONLY
     01_rls_adversarial.sql              the attack, safe to run anywhere
 ```
+
+Step 3 was schema only. **Step 4 (auth) is the first application code to read
+these tables** — it reads and writes `profiles`, and nothing else. The sync
+tables stay untouched until Step 5.
 
 ## Applying the migration
 
@@ -92,6 +97,35 @@ policy rejects a row owned by someone else. That is genuine defence in depth,
 but it means the natural way to probe for this hole *hides* it. Probe with an
 unqualified `UPDATE ... SET user_id = <other>` or you will certify a broken
 policy as safe.
+
+## Dashboard settings auth depends on (Phase 6 Step 4)
+
+Four settings live in the Supabase dashboard, not in this repo. The app cannot
+enforce them, so they are listed here rather than assumed.
+
+| Setting | Where | Why it matters |
+|---|---|---|
+| **Redirect URLs** allowlist | Authentication → URL Configuration | The `redirect_to` this app sends is only honoured if it is on this list. **This is the actual control that stops the callback becoming an open redirect** — add your production origin and `http://localhost:3000`, and nothing else. |
+| **Confirm email** ON | Authentication → Providers → Email | Without it, `signUp` returns a live session and anyone can register any address. The app handles both settings (`SignUpResult.needsEmailVerification`), so this is a policy choice, not a code dependency. |
+| **GitHub provider** enabled + client id/secret | Authentication → Providers | The only OAuth provider wired up. The callback URL to give GitHub is the Supabase one (`<project>.supabase.co/auth/v1/callback`), *not* this app's `/auth/callback`. |
+| **Email templates** using `{{ .TokenHash }}` | Authentication → Email Templates | Optional but recommended — see below. |
+
+### Why the email templates are worth changing
+
+The stock templates produce a link that lands on `/auth/callback?code=...`, and
+the PKCE code verifier for that exchange is in a cookie **on the device that
+started the signup**. Sign up on a laptop, open the email on a phone, and the
+exchange fails with a confusing error.
+
+Changing the confirmation and recovery templates to point at
+
+```
+{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email
+```
+
+(and `type=recovery` for the recovery template) removes that device affinity.
+`app/auth/callback/route.ts` handles **both** shapes, so either configuration
+works and switching is safe at any time.
 
 ## Adding a table later
 

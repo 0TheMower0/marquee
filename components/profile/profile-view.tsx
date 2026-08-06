@@ -12,13 +12,13 @@ import { Button } from "@/components/ui/button";
  */
 export function ProfileView() {
   return (
-    <div className="space-y-8 p-6 sm:p-8">
+    <div className="space-y-8 pb-6 sm:pb-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-display-lg text-fg uppercase">Profile</h1>
           <p className="text-body-sm text-fg-subtle mt-1 max-w-prose">
-            Accounts arrive in a later phase. For now Marquee runs entirely on
-            this device — nothing is synced anywhere.
+            Everything below is computed from this device&rsquo;s own data —
+            signed in or not.
           </p>
         </div>
         <Button href="/profile/stats" variant="outline" size="sm">
