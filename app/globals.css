@@ -368,3 +368,52 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ============================================================================
+   "THIS PAGE ISN'T FULLY LOADED"
+   ============================================================================
+   The one warning in this app that must survive a total JavaScript failure,
+   so it is server-rendered markup shown/hidden by CSS alone. See
+   components/shell/interactivity-warning.tsx for why: if hydration never
+   completes, no client component can render anything, including every
+   diagnostic built for exactly that situation.
+
+   Hidden until 6s so a healthy page never flashes it — hydration takes tens of
+   milliseconds and `HydrationFlag` sets data-hydrated long before the reveal.
+
+   The reveal is an animation DELAY, not a duration, on purpose: the global
+   reduced-motion rule forces every `animation-duration` to 0.01ms, which would
+   defeat a duration-based fade but leaves the delay intact. The banner still
+   appears at the right moment for a user who prefers reduced motion; it simply
+   appears instantly rather than fading. */
+
+.interactivity-warning {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem 1rem;
+  background: color-mix(in oklab, var(--status-warning) 14%, var(--ink-900));
+  border-bottom: 1px solid color-mix(in oklab, var(--status-warning) 40%, transparent);
+  color: var(--fg-default);
+  opacity: 0;
+  visibility: hidden;
+  animation: reveal-interactivity-warning 200ms ease 6s forwards;
+}
+
+@keyframes reveal-interactivity-warning {
+  to {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+/* Set by HydrationFlag's effect. Once React is running, the page is
+   interactive by definition and the warning is irrelevant. */
+html[data-hydrated="true"] .interactivity-warning {
+  display: none;
+}

@@ -5,6 +5,10 @@ import "./globals.css";
 import { BottomNav } from "@/components/shell/bottom-nav";
 import { Footer } from "@/components/shell/footer";
 import { Sidebar } from "@/components/shell/sidebar";
+import {
+  HydrationFlag,
+  InteractivityWarning,
+} from "@/components/shell/interactivity-warning";
 import { StorageBanner } from "@/components/storage/storage-banner";
 import { MergePrompt } from "@/components/sync/merge-prompt";
 import { RatingsProvider } from "@/lib/ratings";
@@ -60,6 +64,13 @@ export default function RootLayout({
       className={`${bebas.variable} ${inter.variable} h-full antialiased`}
     >
       <body className="bg-ink text-fg min-h-full">
+        {/* Server-rendered, hidden by CSS once HydrationFlag marks the
+            document hydrated. This is the ONLY warning in the app that
+            survives client JS never running — every other diagnostic is a
+            Client Component and is silent in exactly the case it exists for.
+            Placed outside every provider so nothing can prevent it rendering. */}
+        <InteractivityWarning />
+        <HydrationFlag />
         {/* Visually hidden until focused — the first Tab stop on any page,
             so a keyboard user can jump past Sidebar/BottomNav straight to
             content instead of tabbing through nav on every single page. */}

@@ -2596,17 +2596,81 @@ range encoding is deliberately NOT preserved server-side).
         `react-hooks/set-state-in-effect` rejects (third time in this
         codebase), and it gets the SSR snapshot right by construction, so the
         banner never flashes into server HTML and back out.
-      - **Root cause of the disabled controls specifically is still
-        unconfirmed.** The crypto faults fully explain the empty Library; they
-        do not obviously explain `ready` staying false, and that could not be
-        diagnosed remotely without a console. Both are now fixed or made
-        impossible to reach silently, and the diagnostics panel answers it in
-        one tap on the device itself.
+      - ⚠️ **CORRECTED IN STEP 5c: the crypto faults were NOT the cause of what
+        the live test saw.** This section originally claimed they "fully
+        explain the empty Library". They do not — they are real bugs that would
+        bite a signed-in user on a non-HTTPS *production* deployment, and they
+        were latent on the device in question. The actual cause was
+        `allowedDevOrigins`. Both fixes stand on their own merit; the
+        attribution was wrong and is corrected below.
       - 5 new tests simulating a non-secure context (including a guard
         asserting the simulation really is missing both APIs, so the block
         cannot pass trivially) — 423 total.
       - **Still owed**: a live two-device round trip — sign in on a second
         device, edit both sides offline, reconnect, and confirm convergence.
+- [x] **Step 5c** — The real cause, found by reproducing rather than reasoning.
+      Symptoms on a phone at `http://192.168.1.112:3000`: Library stuck on
+      loading skeletons, tracking controls disabled, **and the diagnostics
+      panel added in Step 5b not clickable either**. That last one is the tell:
+      a Client Component that cannot be clicked means **hydration never
+      completed**, so the problem was never in the storage or tracking
+      providers.
+      - **Root cause: Next 16 blocks cross-origin requests to dev-only assets
+        by default.** The dev server initializes with `localhost`, so reaching
+        it at a LAN IP is cross-origin; the HMR WebSocket handshake fails with
+        `ERR_INVALID_HTTP_RESPONSE` and the dev client never hydrates. Fixed
+        with `allowedDevOrigins` in `next.config.ts`, which **auto-detects this
+        machine's LAN IPv4 addresses** rather than hardcoding one — a hardcoded
+        IP fixes today's laptop and breaks the next one in the same confusing
+        way. `DEV_ALLOWED_ORIGINS` is the escape hatch for tunnels and VPNs.
+      - **It is DEV-ONLY. A non-HTTPS production deployment was never broken.**
+        Proved by running `next start` and probing the same LAN origin: fully
+        hydrated, real empty state, zero errors. That single comparison is what
+        separated "our app breaks on insecure origins" from "our dev server
+        does", and the two have completely different fixes.
+      - **Reproduced with headless Chrome over CDP**, not inferred: a control
+        (localhost, secure) against the repro (LAN IP, insecure), capturing
+        `Runtime.exceptionThrown`, console errors, and a DOM probe.
+        Decisive readings — `secureContext: false`, `localStorageWorks: true`
+        (storage was never the problem), 15 skeletons, and **zero exceptions**.
+        Nothing threw; it hung. That is why every Step 5b mechanism stayed
+        silent: `StorageBanner` needs the memory driver, `loadFailed` needs a
+        rejection, and both need hydration to render at all.
+      - **The structural fix: a warning that survives JS never running.** Every
+        diagnostic in this app was a Client Component, so all of them were mute
+        in precisely the case they existed for. `InteractivityWarning` is
+        server-rendered markup hidden by CSS once `HydrationFlag`'s effect sets
+        `data-hydrated` on `<html>` — inverted from the obvious design, because
+        the message that must survive a total JS failure cannot depend on JS to
+        appear. Not a `<noscript>`: that covers "JS is switched off", not "JS
+        loaded and then failed", which renders nothing at all.
+      - **The reveal is an animation DELAY, not a duration.** The global
+        reduced-motion rule forces every `animation-duration` to `0.01ms`,
+        which would defeat a duration-based fade — the delay survives it, so
+        the banner still appears at the right moment, just instantly.
+      - **Verified in both directions**, which matters more than it sounds: a
+        warning that is always visible is noise, and one that never appears is
+        decoration. Scripts enabled → `display: none`. Scripts disabled via
+        CDP `Emulation.setScriptExecutionDisabled` → `display: flex`,
+        `visibility: visible`, `opacity: 1`, real box. 6s delay so a healthy
+        load never flashes it.
+      - **Interactive confirmation on the insecure origin after the fix**:
+        diagnostics button found and clicked, panel opened reporting
+        "Storage: Saving normally / Secure context: No (plain HTTP)", tracking
+        controls enabled, clicking Watched persisted
+        `marquee:tracking:movie:the-godfather`, and the watch log recorded the
+        event. Zero exceptions throughout.
+      - **A useful cross-check on the Step 5b tests**: the real browser on the
+        insecure origin reports `hasSubtle: false, hasRandomUUID: false` —
+        exactly what the unit-test simulation produces by deleting them. The
+        simulation was faithful; it was simply testing a bug that was not the
+        one being hunted.
+      - **The debugging lesson worth keeping.** Three symptoms pointed at
+        storage, and storage was fine. What actually identified it was the one
+        symptom that did NOT fit — a diagnostic panel that could not be
+        clicked. When a diagnostic built for a failure is itself dead, the
+        fault is below the layer being diagnosed, and no amount of hardening
+        that layer will find it.
 - [ ] **Step 6** — Spoiler-safe comments, shared lists
 
 ---
