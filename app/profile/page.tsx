@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 
 import { AccountCard } from "@/components/auth/account-card";
+import { PendingInvites, PendingInvitesSkeleton } from "@/components/lists/pending-invites";
 import { ProfileView } from "@/components/profile/profile-view";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -18,6 +19,13 @@ export default function ProfilePage() {
           part of the app that works without it. */}
       <Suspense fallback={<Skeleton className="h-40 w-full rounded-lg" />}>
         <AccountCard />
+      </Suspense>
+
+      {/* Own Suspense boundary, same reasoning as AccountCard above — a
+          pending-invites fetch is a network round trip that must not block
+          the local-storage-only XP/streak/badge cards beneath it. */}
+      <Suspense fallback={<PendingInvitesSkeleton />}>
+        <PendingInvites />
       </Suspense>
 
       <ProfileView />

@@ -189,6 +189,16 @@ export function LibraryView() {
 
   return (
     <div className="space-y-10 p-6 sm:p-8">
+      <div className="flex justify-end">
+        {/* Phase 6 Step 6b — shared lists live at their own route rather than
+            as a third tracking-status section here: a list isn't a tracking
+            state, it's a named, shareable collection that can hold titles
+            regardless of anyone's watched status. */}
+        <Button href="/lists" variant="outline" size="sm">
+          My lists
+        </Button>
+      </div>
+
       <StatusSection section={SECTIONS[0]} allEntries={all} />
 
       {/* Sits where a plain "Watching" grid used to — same position in the

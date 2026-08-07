@@ -2919,10 +2919,151 @@ range encoding is deliberately NOT preserved server-side).
         programmatically afterward — worth remembering if this file is ever
         touched again.
       - **Not built this step, and out of scope on purpose**: shared lists
-        (a separate, unstarted step below), an admin UI for un-hiding a
+        (built separately as Step 6b below), an admin UI for un-hiding a
         comment or reviewing reports, and per-account report-abuse detection
         beyond the unique-report-per-account constraint.
-- [ ] **Step 6b** — Shared lists
+- [x] **Step 6b** — Shared and public lists (`supabase/migrations/20260810000001_lists.sql`,
+      `lib/lists/`, `components/lists/`, `app/lists/`). Named lists with
+      private/unlisted/public visibility, a shareable link (the list's own
+      `id`), collaborative editing via invite/accept, an "agree on" view for
+      collaborative lists, and following public lists.
+      - **The RLS self-reference recursion trap is the single most important
+        thing to understand before touching this migration.** `can_view_list`
+        and `can_edit_list` both query the SAME `lists` table their own
+        policies protect — a `security invoker` version of either would
+        recurse forever (the inner query re-triggers the calling policy,
+        which calls the function again). Every list-related helper
+        (`can_view_list`, `can_edit_list`, `shares_editable_list_with`,
+        `list_follower_counts`) is `security definer` specifically to avoid
+        this, even the ones not strictly self-referential — consistency over
+        proving each one safe individually. `auth.uid()` inside a definer
+        function still resolves to the CALLING user (it reads the
+        session-level `request.jwt.claims` GUC, unaffected by definer's
+        privilege escalation), so this doesn't weaken who the function acts
+        as, only what it's allowed to read while doing so.
+      - **Public and unlisted are IDENTICAL at the RLS layer, on purpose.**
+        `can_view_list` treats both as "any authenticated user, given the
+        id" — discoverability, not visibility, is what actually separates
+        them, and that distinction is pushed entirely to the query layer:
+        `getPublicLists()` is the ONE place that filters
+        `visibility = 'public'` explicitly, with a doc comment warning that
+        forgetting that `.eq` would silently turn "unlisted" into "public"
+        for anyone who calls it. Confirmed with the user before building:
+        shareable links work for signed-in Marquee accounts only, matching
+        Step 6a's comments precedent exactly — no anonymous-viewer carve-out
+        was added anywhere.
+      - **A new, deliberately narrow cross-user RLS exception**, confirmed
+        with the user before implementation since `tracked_titles` had been
+        strictly own-rows-only since Phase 6 Step 3: the "what can we all
+        agree on" view needs to see OTHER members' watchlist/watched status.
+        `shares_editable_list_with(other_user, media_type, title_id)` grants
+        that only for a title that is actually on a list where both the
+        caller and `other_user` are owner-or-accepted-collaborator — nothing
+        else about either person's library is exposed. This is a second,
+        additive SELECT policy (`tracked_titles_select_shared_list_member`),
+        not a replacement for the Step 3 own-rows policy — Postgres OR's
+        multiple permissive policies for the same command together, so nei-
+        ther can accidentally narrow the other.
+      - **Adversarial SQL testing caught the same false claim Step 3 already
+        corrected, this time by construction rather than by re-deriving it**:
+        every `WITH CHECK` in this migration is written explicitly rather
+        than relying on the (correct, but easy to forget) Postgres default of
+        mirroring `USING`. `supabase/tests/04_lists_adversarial.sql` — 17
+        checks, all passing on the FIRST real run against a fresh PostgreSQL
+        18 cluster. Check 12 is the one worth remembering: after alice's
+        private list becomes PUBLIC, carol (a total outsider) correctly
+        gains read access to the list and its items, but NOT to alice's
+        `tracked_titles` row for a title on it — proving the agreement
+        carve-out requires actual EDIT membership, not mere visibility, and
+        that visibility alone can never leak tracking data. Check 17 is the
+        negative control (an unprotected mirror table must leak) — the same
+        discipline every adversarial suite in this project follows: attack,
+        don't assert, and always prove the harness can detect a missing gate.
+      - **`list_collaborators` needed explicit named FK constraints**, caught
+        during design review before ever running the migration, not from a
+        test failure: it has TWO foreign keys to `profiles` (`user_id` and
+        `invited_by`), and PostgREST cannot disambiguate
+        `member:profiles!list_collaborators_user_id_fkey(...)` from
+        `inviter:profiles!list_collaborators_invited_by_fkey(...)` in a
+        `.select()` embed without them named. `list_items.added_by` got the
+        same treatment for consistency, though it only has the one FK.
+      - **Deletion policy is deliberately asymmetric per relationship**,
+        matching who should be allowed to lose what: `lists.owner_id` and
+        comment-style ownership FKs `on delete cascade` (content dies with
+        its owner's account), but `list_collaborators.invited_by` and
+        `list_items.added_by` are `on delete set null` — a collaborator's
+        own account deletion must not destroy content they contributed to
+        someone ELSE's list; only their attribution is lost.
+      - **Rate limits** (`lib/ratelimit/rules.ts`): `lists` (10/min — creates
+        and edits, infrequent by nature), `listItems` (60/min — the add/
+        remove-while-building-a-list action, needs real headroom),
+        `listCollaborators` (8/min — invites are a lighter-weight version of
+        the same abuse vector comment reports already guard against),
+        `listFollowers` (60/min — a toggle, not content).
+      - **`lib/lists/` mirrors `lib/comments/`'s pure/impure split exactly**:
+        `types.ts`/`validate.ts`/`errors.ts`/`wire.ts` pure and unit-tested
+        (26 tests — heaviest coverage on `computeAgreementItems`, the actual
+        payoff of this feature, covering both directions: never a false
+        agreement, never a hidden real one), `queries.ts` is `server-only`
+        (the read path), `actions.ts` is `"use server"` (the write path /
+        client seam), and `index.ts` deliberately does NOT re-export
+        `queries.ts` so a Client Component importing the barrel can't drag
+        server-only code along with it.
+      - **The Step 6a lesson applied directly, not just cited**:
+        `lib/lists/actions.ts` opens with the exact missing-`user_id` bug
+        from comments as its header comment, and every INSERT below sets its
+        owner-ish column (`owner_id`, `added_by`, `invited_by`, `user_id`)
+        explicitly. `components/lists/list-detail.tsx` wraps `getListDetail`
+        in try/catch with its own `<Suspense>` boundary in
+        `app/lists/[id]/page.tsx` — the doc comment there names the exact
+        `CommentSection` incident (a schema-cache miss taking down an entire
+        title page) as the reason it exists.
+      - **`getListDetail` returns `null` for "doesn't exist" and "you can't
+        see it" indistinguishably, on purpose** — telling a visitor "this
+        list is private" instead of a plain 404 would itself leak that a
+        list with that id exists. The route resolves the ambiguity to
+        `notFound()` either way.
+      - **`AddItemSearch` (the inline title search inside a list) hit the
+        identical "loading" trap `search-view.tsx`'s own comment warns
+        about** while it was being written, not after: a first draft tracked
+        an explicit `"loading"` status, set synchronously at the top of the
+        debounced fetch — which is exactly what `react-hooks/set-state-in-
+        effect` rejects, and would have failed the build. Rewritten to the
+        same `forQuery`-comparison derivation `SearchView` uses: no
+        `isLoading` state variable, "loading" is just "no result yet whose
+        `forQuery` matches the current query."
+      - **The list-items grid reuses `TicketCard` directly, not `TitleGrid`
+        wrapping single-item arrays** — an early draft nested a full
+        `TitleGrid` (its own `grid-cols-2` container) inside each outer grid
+        cell to get one card, which would have rendered every poster at half
+        width inside dead space. Caught by reasoning through the layout
+        before running it, not by a screenshot. The remove ("×") button on
+        an editable card sits top-LEFT, not top-right — `TicketCard` already
+        places `TrackingBadge` top-right as a sibling of its own `<Link>`
+        (never nested inside it, for the same "a button inside an anchor is
+        invalid HTML" reason CLAUDE.md documents there), and two
+        absolute-positioned controls competing for one corner would overlap
+        and steal each other's clicks.
+      - **The agreement view is button-triggered, not fetched on every list
+        load.** It's a real cross-user query plus a pure filter, genuine cost
+        that the vast majority of solo lists would pay for nothing — a
+        button makes that cost visible and opt-in instead of hidden inside
+        every list page's load time.
+      - **Nav entry points**: a "My lists" button on the Library page
+        (deliberately NOT folded into the three tracking-status sections
+        there — a list isn't a tracking state, it holds titles regardless of
+        anyone's watched status) and a `PendingInvites` section on Profile,
+        in its own `<Suspense>` boundary for the same reason `AccountCard`
+        has one — a network round trip must not block the local-storage-only
+        XP/streak/badge cards beneath it. No 5th item was added to the fixed
+        4-item `NAV_ITEMS` global nav; that list stays the Phase 1 four.
+      - Full static verification: typecheck, lint, all 480 vitest tests
+        (26 new), and `next build` all clean. **Not yet verified live** —
+        the migration has not been applied to the real Supabase project.
+        That needs to happen (same gate Step 6a crossed) before an actual
+        browser pass — create/edit/delete a list, change visibility, share a
+        link, invite + accept a collaborator (needs a second real account),
+        add/remove items, run the agreement view, follow a list — can run.
 
 ---
 

@@ -83,4 +83,37 @@ export const RATE_LIMITS = {
    * real session.
    */
   commentReports: { name: "comment-reports", limit: 5, windowSeconds: 60 },
+
+  /**
+   * Phase 6 Step 6b: create/rename/re-describe/re-visibility/delete a list.
+   * Rarer, more deliberate actions than posting a comment — a human creates
+   * or edits a handful of lists in a session, never a stream of them. Tighter
+   * than `comments` for that reason, not because the abuse risk is higher.
+   */
+  lists: { name: "lists", limit: 10, windowSeconds: 60 },
+
+  /**
+   * Adding/removing items. Sized for the realistic burst this app itself
+   * creates: building a new list means adding many titles in quick
+   * succession — one click each, no debounce — so this needs the same
+   * generosity `commentLikes` gets, for the same reason (a legitimate human
+   * action, not a scripted one, produces the burst).
+   */
+  listItems: { name: "list-items", limit: 60, windowSeconds: 60 },
+
+  /**
+   * Inviting a collaborator, and responding to an invite (accept/decline).
+   * Tight, same severity class as `commentReports`: an invite is reachable
+   * abuse — spamming invites at strangers is itself the nuisance, not just
+   * something to be protected from. A real owner invites a handful of people
+   * to a shared list, not dozens in a minute.
+   */
+  listCollaborators: { name: "list-collaborators", limit: 8, windowSeconds: 60 },
+
+  /**
+   * Follow/unfollow. A toggle with the same low-risk shape as `commentLikes`
+   * — someone browsing a "discover public lists" page and following several
+   * in a row is ordinary use, not abuse.
+   */
+  listFollowers: { name: "list-followers", limit: 60, windowSeconds: 60 },
 } as const satisfies Record<string, RateLimitRule>;

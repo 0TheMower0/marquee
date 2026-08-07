@@ -256,3 +256,47 @@ export function MessageIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** Phase 6 Step 6b — lists. A stack of rows, distinct from FilmIcon/TvIcon
+ *  (which mark a single title) since a list is a collection of them. */
+export function ListIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <path d="M3 6h.01M3 12h.01M3 18h.01" />
+    </Icon>
+  );
+}
+
+/** Collaborators / followers — plural of UserIcon, never used interchangeably
+ *  with it: this marks a GROUP, UserIcon marks one person. */
+export function UsersIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M2.8 19c1.2-3.4 3.4-5 6.2-5s5 1.6 6.2 5" />
+      <path d="M16 4.2a3.2 3.2 0 0 1 0 6.2" />
+      <path d="M18.5 14.3c2 .5 3.4 2 4.3 4.7" />
+    </Icon>
+  );
+}
+
+/** The shareable-link affordance on a public/unlisted list. */
+export function LinkIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9.5 14.5 14.5 9.5" />
+      <path d="M11 6.5 12.6 4.9a3.6 3.6 0 0 1 5 5L16 11.5" />
+      <path d="M13 17.5 11.4 19.1a3.6 3.6 0 0 1-5-5L8 12.5" />
+    </Icon>
+  );
+}
+
+/** Remove / close — used for leaving a list, removing a collaborator or item. */
+export function XIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m5 5 14 14M19 5 5 19" />
+    </Icon>
+  );
+}
