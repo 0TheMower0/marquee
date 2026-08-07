@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { EpisodeDiscussion } from "@/components/comments/episode-discussion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +12,7 @@ import {
   SpinnerIcon,
 } from "@/components/ui/icons";
 import { Skeleton } from "@/components/ui/skeleton";
+import { episodeScope } from "@/lib/comments";
 import { httpProvider } from "@/lib/content/http";
 import type { Episode, Season, Title } from "@/lib/content/types";
 import {
@@ -300,6 +302,7 @@ export function SeasonList({ title, seasons }: { title: Title; seasons: Season[]
             {isExpanded && (
               <EpisodesArea
                 cacheEntry={episodeCache[season.seasonNumber]}
+                titleId={title.id}
                 seasonNumber={season.seasonNumber}
                 watched={watched}
                 ready={ready}
@@ -324,6 +327,7 @@ export function SeasonList({ title, seasons }: { title: Title; seasons: Season[]
 
 function EpisodesArea({
   cacheEntry,
+  titleId,
   seasonNumber,
   watched,
   ready,
@@ -333,6 +337,9 @@ function EpisodesArea({
   onMarkUpTo,
 }: {
   cacheEntry: EpisodeCacheEntry | undefined;
+  /** TV only — season-list.tsx never mounts for a movie, so this is always a
+   *  `tv` scope once handed to EpisodeDiscussion below. */
+  titleId: string;
   seasonNumber: number;
   watched: WatchedEpisodes;
   ready: boolean;
@@ -431,6 +438,17 @@ function EpisodesArea({
                     .join(" · ")}
                 </span>
               </p>
+
+              {/* No discussion toggle for an episode that hasn't aired — nobody
+                  could have watched it yet, so there is nothing to gate and
+                  nothing to say. Keeps the common case (a long-running show,
+                  mostly aired) from growing a "Discussion" row under every
+                  single future episode too. */}
+              {!unaired && (
+                <EpisodeDiscussion
+                  scope={episodeScope("tv", titleId, seasonNumber, episode.episodeNumber)}
+                />
+              )}
             </div>
 
             {!unaired && (

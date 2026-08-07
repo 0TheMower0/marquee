@@ -209,3 +209,50 @@ export function GitHubIcon(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * Phase 6 Step 6 — comments. `fill` variant toggled by the caller (comment
+ * like button), same "outline by default, filled to show an active state"
+ * language already established for other toggles in this app (compare the
+ * filled accent circle TrackingBadge uses once a title is tracked).
+ */
+export function HeartIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 20.5s-7.5-4.6-9.8-9.2C.7 8 2 4.8 5.2 4a4.9 4.9 0 0 1 6.8 2 4.9 4.9 0 0 1 6.8-2c3.2.8 4.5 4 3 7.3-2.3 4.6-9.8 9.2-9.8 9.2Z" />
+    </Icon>
+  );
+}
+
+/** One reply arrow, curving back — used for the reply affordance, which is
+ *  only ever offered on a top-level comment (one level of nesting). */
+export function ReplyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 17 4 12l5-5" />
+      <path d="M4 12h10a6 6 0 0 1 6 6v1" />
+    </Icon>
+  );
+}
+
+/** The report/flag control. Deliberately plain rather than alarming (no
+ *  danger-red default here — that's applied by the caller only once a report
+ *  has actually been filed) so it doesn't read as a warning sign sitting next
+ *  to every single comment. */
+export function FlagIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5 3v18" />
+      <path d="M5 4h11l-2.5 3.5L16 11H5" />
+    </Icon>
+  );
+}
+
+/** The Discussion tab/section marker — a speech bubble. */
+export function MessageIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M21 12a8 8 0 0 1-8 8H6l-3 3 .8-4A8 8 0 1 1 21 12Z" />
+    </Icon>
+  );
+}

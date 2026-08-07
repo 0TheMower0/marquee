@@ -1,7 +1,9 @@
 # Supabase — schema, RLS, and the adversarial test
 
-Phase 6 Steps 3 and 4. The design and reasoning live in
-[`../docs/phase-6-sync-design.md`](../docs/phase-6-sync-design.md).
+Phase 6 Steps 3, 4, 5, and 6a. The sync design and reasoning live in
+[`../docs/phase-6-sync-design.md`](../docs/phase-6-sync-design.md); the
+comments design lives inline in `20260809000001_comments.sql`'s own header
+comment.
 
 ```
 supabase/
@@ -9,10 +11,12 @@ supabase/
     20260801000001_initial_schema.sql      tables + RLS + policies, one transaction
     20260806000001_usernames.sql           profiles.username + availability RPC
     20260807000001_sync_conflict_rules.sql LWW / LEAST / GREATEST triggers
+    20260809000001_comments.sql            comments, likes, reports + spoiler gating
   tests/
     00_local_supabase_shim.sql          auth schema/roles, LOCAL ONLY
     01_rls_adversarial.sql              the RLS attack, safe to run anywhere
     02_sync_conflict_rules.sql          the conflict-rule attack, safe anywhere
+    03_comments_adversarial.sql         the spoiler-gating attack, safe anywhere
 ```
 
 > ⚠️ **`20260807000001` must be applied before sync is safe to use.** It is not
@@ -135,6 +139,30 @@ for something working exactly as designed.
 runs the same attack, and asserts the newer write IS lost. Without it, checks
 1–10 would pass just as happily against a database where none of the triggers
 exist.
+
+## The spoiler-gating test (Phase 6 Step 6a)
+
+`tests/03_comments_adversarial.sql` — 17 checks, same discipline as the two
+above: it attacks, it does not assert. Check 1 is the whole feature in one
+assertion: a reader who has not watched an episode gets **zero rows** for it,
+both from a list query and a direct `SELECT` by id — not a hidden-but-present
+row, nothing at all. Also covers posting into a scope you can't read back
+(rejected), the TV-open/movie-gated title-level asymmetry, reply-scope
+inheritance and one-level nesting, liking/reporting something you can't see
+(rejected), self-reports (rejected), the auto-hide threshold firing at exactly
+3 distinct reporters and not 2, the comment's own author still seeing it once
+hidden while nobody else can, un-hiding being rejected even for the author,
+editing after delete being rejected with the body force-cleared, identity-
+field tampering on `UPDATE`, and a negative control proving the harness can
+tell a protected table from an unprotected one.
+
+**Check 16 needed a real fix, not just a passing run.** The first draft
+expected a plain `UPDATE`/`DELETE` against another user's row to *raise*. It
+doesn't — Postgres's rule when no policy grants a command is to authorize ZERO
+ROWS for it, so the statement succeeds having changed nothing, no exception at
+all. Fixed to assert on `GET DIAGNOSTICS ROW_COUNT` plus an out-of-band read
+confirming the row survives, the same shape already used for the `UPDATE`
+check beside it.
 
 ## Dashboard settings auth depends on (Phase 6 Step 4)
 

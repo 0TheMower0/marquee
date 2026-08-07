@@ -1387,6 +1387,46 @@ write must stop the operation rather than degrade. `restoreSnapshot` is
 additive on purpose: it does not delete records created since the snapshot,
 because an undo that destroys newer work is worse than the bug it fixes.
 
+## Comments — `lib/comments/`
+
+```
+lib/comments/
+  types.ts      CommentScope, Comment, isGatedScope           [pure]
+  validate.ts   body sanitization + length limits              [pure, tested]
+  wire.ts       row <-> domain mapping, thread grouping        [pure, tested]
+  errors.ts     CommentError + Postgres-code mapping           [pure, tested]
+  queries.ts    server-only: the SSR + on-demand read path
+  actions.ts    "use server" — post/edit/delete/like/report
+
+components/comments/
+  comment-section.tsx     server wrapper: gates on account, streams
+  comments-client.tsx     owns thread state, dispatches mutations
+  comment-item.tsx        one comment: like/reply/edit/delete/report
+  episode-discussion.tsx  the per-episode lazy-loaded toggle
+```
+
+**The differentiator is enforced by the database, not the client.** A reader
+who hasn't watched an episode gets zero rows for it — not a blurred row, not
+something hidden-then-revealable in devtools. `can_view_comment_scope()`
+(the migration) is the single source of truth for this, called both from the
+RLS policies themselves and, via RPC, from `queries.ts` to decide what the UI
+shows — never a second TypeScript reimplementation that could drift from what
+the database actually enforces.
+
+**Gating is asymmetric, on purpose**: TV title-level discussion is open (no
+episode to move spoiler-bearing chat to instead), movie title-level and every
+TV episode are gated on the reader's own (synced) watch status. See the
+migration's header comment for the full reasoning.
+
+**Two bugs that only live testing found, not the SQL adversarial suite**: a
+missing try/catch around the data fetch that took down an entire title page on
+a transient failure, and two INSERT calls missing `user_id`/`reporter_id` —
+which failed as an ordinary-looking RLS rejection rather than the missing-field
+bug it actually was, since a NULL compared against `auth.uid()` is never TRUE.
+Both are detailed in the Phase 6 Step 6a status entry below; the second is
+worth remembering as a category — an RLS rejection is not proof the POLICY is
+wrong, verify what the row you're writing actually contains first.
+
 ## Phase roadmap
 
 | Phase | Scope |
@@ -2671,7 +2711,218 @@ range encoding is deliberately NOT preserved server-side).
         clicked. When a diagnostic built for a failure is itself dead, the
         fault is below the layer being diagnosed, and no amount of hardening
         that layer will find it.
-- [ ] **Step 6** — Spoiler-safe comments, shared lists
+- [x] **Step 6a** — Spoiler-safe comments (`lib/comments/`, `components/comments/`,
+      one migration). Shared lists are a separate, unstarted step — see below.
+      The differentiator this ships: an episode comment is invisible to a
+      reader who hasn't watched that episode — not blurred, not client-side
+      hidden-then-revealed, **absent from the query result entirely**. A
+      reader inspecting network traffic sees nothing, because the row never
+      left the database. Verified live against a real Supabase project, not
+      just asserted: Episode 1 (watched) showed the post form; Episode 2
+      (unwatched, same show, same session) showed "Locked for now" with zero
+      rows returned — see the live-testing section below.
+      - **The gating asymmetry is a judgment call, stated plainly.** The brief
+        said "episode comments hidden until watched" and left title-level
+        ungated. Applied literally, a MOVIE's only comment bucket — there is
+        no episode to move spoilers to instead — would sit wide open the
+        instant you land on its page, undermining the pitch for half the
+        catalog. So: TV title-level stays OPEN (general "no spoilers pls"
+        chatter, no episode exists to carry it to instead); MOVIE title-level
+        is GATED on `tracked_titles.status = 'watched'`; TV episode-level is
+        GATED on a `watched_episodes` row for that exact episode. Reuses
+        Phase 6 Step 5's SYNCED tracking tables as ground truth, which is
+        also why gating is only as current as the reader's last sync — the
+        same eventual-consistency the sync design already accepts everywhere
+        else, not a new weakness introduced here.
+      - **One function drives both the SELECT and INSERT policies, on
+        purpose.** `can_view_comment_scope(media_type, title_id, season,
+        episode)` — `security invoker`, so it runs as the calling user and
+        its own queries are themselves subject to that user's RLS on
+        `watched_episodes`/`tracked_titles`; no elevated privilege needed at
+        all. If SELECT and INSERT used separate logic they could drift apart
+        — a reader could be shown a "write a comment" box for a scope whose
+        own comments they can't read back, a confusing, security-adjacent bug
+        this design rules out by construction. The same function is RPC'd
+        directly from `lib/comments/queries.ts` to compute `canParticipate`
+        for the UI, rather than a second TypeScript reimplementation of the
+        gating rule that could silently disagree with what RLS actually
+        enforces.
+      - **Replies: exactly one level, and a reply's scope is NEVER taken from
+        the client.** `comments_enforce_nesting()` (BEFORE INSERT) looks up
+        the parent, rejects a reply-to-a-reply, and OVERWRITES the new row's
+        `media_type`/`title_id`/`season_number`/`episode_number` from the
+        parent's real values — Postgres evaluates RLS `WITH CHECK` against
+        the row *after* BEFORE triggers run, so this means a reply is always
+        gated on its parent's actual scope regardless of what a client
+        claims. Also blocks replying to an already-hidden comment unless you
+        are its author.
+      - **Likes and reports both re-derive visibility at write time**, the
+        same function again: you cannot like or report a comment you are not
+        allowed to see. Without this, "like" becomes a scope-existence
+        oracle — probing comment ids and watching insert succeed/fail would
+        let a client detect hidden episode discussion it otherwise can't read
+        at all.
+      - **Like counts are computed, never stored** — the same discipline
+        Phase 5 applied to XP/streaks/badges, extended to a new domain, and
+        it removes an entire trigger/drift-bug surface for free.
+        `comment_like_counts(uuid[])` is `security definer`, batched (avoids
+        an N+1 across a whole thread), and discloses a NUMBER only — never
+        who liked what, never a row. `comment_likes` itself stays a plain
+        own-rows table, the uniform pattern every other table in this schema
+        uses; a user's own SELECT answers "did I like this," the RPC answers
+        "how many," and the two are never conflated.
+      - **The "basic moderation path" is auto-hide at 3 distinct reports, and
+        deliberately nothing more.** Building a fictional admin dashboard for
+        a personal, non-commercial project would be real scope creep; the
+        honest "basic" version is a `security definer` trigger
+        (`comment_reports_auto_hide`) that counts distinct reporters per
+        comment and flips `status` to `'hidden'` at the threshold — the same
+        narrow, justified privilege-elevation class as `username_available`.
+        Stated as an accepted limitation, same tone as the rate limiter's own
+        "not a strict distributed limiter" admission: 3 coordinated bad-faith
+        accounts CAN trigger this, and there is **no un-hide path** in this
+        system yet — `comments_lock_immutable_fields()` explicitly rejects
+        `'hidden' -> 'visible'` via a plain UPDATE, even for the comment's own
+        author. A site operator can flip it back via the Supabase SQL editor
+        with the service role until an admin UI exists in a later phase.
+      - **Deletion is a tombstone, matching every other table in this
+        schema** — there is no DELETE policy for `comments` at all (only
+        `comment_likes` gets one; a like is a toggle that orphans nothing,
+        unlike a comment with replies under it).
+        `comments_lock_immutable_fields()` forces `body := ''` the instant
+        `deleted_at` is set, unconditionally, even if the client forgot to —
+        a tombstoned comment can never retain its text. The same trigger also
+        auto-stamps `edited_at` server-side whenever body changes, so a
+        client cannot post an edit while claiming it was never edited.
+      - **17 adversarial checks against real PostgreSQL 18**
+        (`supabase/tests/03_comments_adversarial.sql`), same discipline as
+        `01_rls_adversarial.sql`/`02_sync_conflict_rules.sql` — it attacks,
+        it does not assert. Check 1 is the load-bearing one: a reader who
+        hasn't watched an episode gets **zero rows**, both from a list query
+        and a direct SELECT by id. Also covers: posting into a scope you
+        can't read back is rejected (3); TV title-level stays open, movie
+        title-level is gated (4, 5); reply scope is inherited and one-level
+        nesting is enforced (6, 6b); liking/reporting something you can't see
+        is rejected (7, 9b); no self-reports (9a); auto-hide fires at exactly
+        3 distinct reporters, not 2 (10); the author still sees their own
+        hidden comment, everyone else doesn't (11); un-hiding is rejected
+        even for the author (12); editing after delete is rejected and body
+        is force-cleared (14); identity-field tampering on UPDATE is rejected
+        (15); a negative control proves the harness can actually detect a
+        missing gate (17).
+      - **A real RLS-semantics nuance found while writing check 16b.** No
+        DELETE policy exists for `comments`, and the first draft of that
+        check expected a plain UPDATE-style rejection to *raise*. It doesn't:
+        Postgres's rule when NO policy grants a command is to authorize ZERO
+        ROWS for it, so the DELETE statement completes successfully having
+        removed nothing — no exception at all. The check was wrong, not the
+        schema; fixed to assert on `GET DIAGNOSTICS ROW_COUNT` plus an
+        out-of-band read confirming the row still exists, the same shape the
+        adjacent UPDATE check already used.
+      - **Two real application-layer bugs, found ONLY by live testing against
+        a real Supabase project — the adversarial SQL suite could not have
+        caught either, because both were bugs in the TypeScript, not the
+        database.**
+        1. `CommentSection` (a Server Component) called `getCommentSectionData`
+           with no try/catch. A live check against the real project — before
+           the comments migration had even been applied there yet — hit a
+           schema-cache miss, and with nothing catching it, the error
+           propagated straight through to `app/error.tsx`, replacing the
+           **entire title page** — poster, cast, tracking controls,
+           everything — with the generic "Something broke" screen. CLAUDE.md
+           already states the rule this violated ("never block the page on a
+           secondary source," applied to the OMDb ratings row and watch-
+           providers section); `CommentSection` simply hadn't been brought
+           into line with it. Fixed with the same try/catch-and-degrade
+           pattern as `RatingsSection`, plus its own `<Suspense>` boundary at
+           both call sites in `page.tsx` so a slow (not just failing) fetch
+           can't block the page either.
+        2. `postCommentAction` and `reportCommentAction` both **omitted
+           `user_id`/`reporter_id` from their INSERT payloads.** Neither
+           column has a default, and — the genuinely misleading part — the
+           gap did NOT surface as a NOT NULL violation. `user_id = (select
+           auth.uid())` in the INSERT policy's `WITH CHECK` compares NULL
+           against a UUID, which is never TRUE, so Postgres rejected the row
+           as an ordinary-looking `42501` ("row-level security policy"
+           violation) — **reading exactly like a gating failure.** This sent
+           debugging in the wrong direction for a real stretch: a temporary
+           diagnostic action confirmed the RPC gating check AND the raw
+           `tracked_titles` row were both completely correct (`rpcResult:
+           true`, `status: "watched"`), which is what finally pointed at the
+           INSERT payload itself rather than the gating logic. Fixed by
+           explicitly setting both fields; `toggleLikeAction`'s upsert
+           already did this correctly and was the pattern the other two
+           should have matched from the start.
+      - **The debugging lesson worth keeping, stated the same way the Step 5c
+        one was:** an error that LOOKS like a security/gating rejection is
+        not necessarily one. Before concluding "the policy is wrong," verify
+        the row you're trying to write actually contains what you think it
+        contains — a temporary server-side log of the RAW (never client-
+        facing) error, plus a direct RPC-and-row comparison, settled in
+        minutes what guessing had not.
+      - **A lighter, permanent version of that diagnostic logging was kept.**
+        `lib/comments/actions.ts`'s `failure()` now logs server-side (never
+        to the client) specifically for `forbidden`/`unknown`/`network`
+        outcomes — kinds the UI shouldn't be able to trigger through normal
+        use, unlike `invalid_input`/`rate_limited`, which are ordinary user
+        edges the UI already anticipates and doesn't need a log line for.
+      - **Full live round trip confirmed working**, not just the schema:
+        post, like (count updates, button toggles to "Unlike"), reply (nests
+        correctly, no further Reply button offered — matches one-level-
+        nesting), edit (body updates, "· edited" marker appears, server-
+        stamped), delete (renders "[deleted]" with every control hidden,
+        thread structure preserved — the reply stayed visible after its
+        parent was deleted), and a full page reload confirming every one of
+        those persisted server-side rather than only in optimistic client
+        state. Zero console errors throughout the confirmed-working portion
+        of the session. Test comments were deleted afterward to leave the
+        account clean; the incidental tracking state created along the way
+        (Breaking Bad marked "watching" with S1E1 watched) was deliberately
+        left rather than reverted, and is worth knowing about.
+      - **Placement**: TV gets a third "Discussion" tab alongside Overview/
+        Seasons (open, title-level). Movie gets a "Discussion" section below
+        Cast & Crew (gated, title-level). Episode-level discussion is inline
+        per-episode in `season-list.tsx`
+        (`components/comments/episode-discussion.tsx`), collapsed by
+        default and fetched only on expand via a Server Action
+        (`fetchCommentThreadAction` — `lib/comments/queries.ts` is
+        `server-only` and unreachable directly from that Client Component) —
+        the same "fetch nothing until asked" discipline that file's own
+        header comment already documents for episode lists themselves, one
+        layer deeper. A show with 200 episodes never fetches 200 threads for
+        one page view. Gated client-side on `useSync()?.userId` purely as a
+        UX nicety (no toggle promising a feature that would just reject); the
+        Server Action re-checks the session regardless.
+      - **Rate limits**: `RATE_LIMITS.comments` (12/min, post/edit/delete
+        shared — splitting further buys little for a real cost),
+        `commentLikes` (60/min — a toggle, not content, and a real person
+        liking several comments while scrolling a thread is normal),
+        `commentReports` (5/min — the tightest, same severity class as
+        `auth`, because reporting is itself an abuse vector: a single account
+        spamming reports across many comments trying to find two allies for
+        the 3-reporter auto-hide threshold is the thing worth slowing down).
+      - **Sanitization is about whitespace/control characters, not HTML.**
+        Comments render as a plain React text child — never
+        `dangerouslySetInnerHTML`, no markdown parser — so injection is
+        structurally impossible by construction, a stronger guarantee than
+        any sanitizer since it can't be bypassed by a sanitizer bug.
+        `sanitizeCommentBody` instead strips zero-width/bidi-override
+        characters (a real spoof vector independent of any markup — a bidi
+        override can make text DISPLAY as something other than what it
+        literally contains) and collapses 3+ newlines. Built from explicit
+        numeric code points rather than literal or `\u`-escaped characters in
+        the source — both render identically to nothing in an editor, which
+        would make the regex itself unreviewable in a diff for a file whose
+        whole job is stripping exactly those characters. The Edit tool
+        pasted the literal invisible characters in twice while this file was
+        being written, caught only by scanning the file's own codepoints
+        programmatically afterward — worth remembering if this file is ever
+        touched again.
+      - **Not built this step, and out of scope on purpose**: shared lists
+        (a separate, unstarted step below), an admin UI for un-hiding a
+        comment or reviewing reports, and per-account report-abuse detection
+        beyond the unique-report-per-account constraint.
+- [ ] **Step 6b** — Shared lists
 
 ---
 

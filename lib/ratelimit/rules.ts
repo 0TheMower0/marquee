@@ -53,4 +53,34 @@ export const RATE_LIMITS = {
    * worth running.
    */
   auth: { name: "auth", limit: 10, windowSeconds: 60 },
+
+  /**
+   * Phase 6 Step 6 comment Server Actions: post, edit, delete. Shared by all
+   * three rather than split further — edit/delete are lower-risk than a fresh
+   * post, but splitting them into their own buckets buys little (nobody
+   * scripts "edit spam") for a real cost (three constants to keep in sync
+   * instead of one). 12/min is generous for a human actually typing and well
+   * above what a legitimate burst — post, then two quick edits fixing a typo —
+   * would ever need, while still turning a scripted flood into a trickle.
+   */
+  comments: { name: "comments", limit: 12, windowSeconds: 60 },
+
+  /**
+   * Liking is the lowest-risk action here — it is a toggle, not content, and
+   * a real person scrolling a big thread tapping several likes in a row is
+   * normal, expected behaviour. Sized generously above that.
+   */
+  commentLikes: { name: "comment-likes", limit: 60, windowSeconds: 60 },
+
+  /**
+   * Reporting gets the tightest limit in this file, on the same reasoning as
+   * `auth`: it is itself an abuse vector, not just a target of one. The
+   * auto-hide trigger only needs 3 DISTINCT reporters per comment to fire
+   * (supabase/migrations/20260809000001_comments.sql), so a single account
+   * spamming reports across many DIFFERENT comments — trying to get lucky
+   * finding two allies, or just being disruptive — is the thing worth
+   * slowing down. A genuine user reports at most a handful of comments in any
+   * real session.
+   */
+  commentReports: { name: "comment-reports", limit: 5, windowSeconds: 60 },
 } as const satisfies Record<string, RateLimitRule>;

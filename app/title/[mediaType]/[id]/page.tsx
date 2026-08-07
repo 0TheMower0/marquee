@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
 import { ContentErrorState } from "@/components/content/content-error-state";
+import { CommentSection, CommentSectionSkeleton } from "@/components/comments/comment-section";
 import { BackdropImage } from "@/components/title/backdrop-image";
 import { CastCrewSection } from "@/components/title/cast-crew-section";
 import { MyRatingChip } from "@/components/title/my-rating-chip";
@@ -25,6 +26,7 @@ import {
 } from "@/components/ui/tabs";
 import { getContentProvider } from "@/lib/content";
 import { ContentError, type ContentErrorKind } from "@/lib/content/errors";
+import { titleScope } from "@/lib/comments";
 import type {
   ExternalRating,
   MediaType,
@@ -360,6 +362,7 @@ export default async function TitleDetailPage({
             <TabsList label="Title sections">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="seasons">Seasons</TabsTrigger>
+              <TabsTrigger value="discussion">Discussion</TabsTrigger>
             </TabsList>
 
             <TabsPanel value="overview">
@@ -388,6 +391,20 @@ export default async function TitleDetailPage({
                 />
               )}
             </TabsPanel>
+
+            {/* Title-level TV discussion is deliberately OPEN, not gated on
+                watched status — there is no episode to move spoiler-bearing
+                chat to instead, and general "no spoilers pls" show chatter is
+                exactly what this bucket is for. Episode-specific discussion
+                lives inline per-episode in the Seasons tab instead — see
+                EpisodeDiscussion in season-list.tsx, and the gating-asymmetry
+                note at the top of the comments migration for the full
+                reasoning. */}
+            <TabsPanel value="discussion">
+              <Suspense fallback={<CommentSectionSkeleton />}>
+                <CommentSection scope={titleScope("tv", title.id)} />
+              </Suspense>
+            </TabsPanel>
           </Tabs>
         ) : (
           <section aria-labelledby="overview-heading" className="mt-8">
@@ -412,6 +429,29 @@ export default async function TitleDetailPage({
         <div className="mt-10 space-y-10">
           <CastCrewSection cast={title.cast} crew={title.crew} />
           <WatchProvidersSection providers={watchProviders} />
+
+          {/* Movie title-level discussion IS gated on watched status — see the
+              gating-asymmetry note at the top of the comments migration. A
+              movie has no episode to carry a spoiler into instead: its one
+              page IS its whole story. TV gets an ungated tab above instead of
+              a section here, because its general chatter and its
+              spoiler-bearing per-episode threads are genuinely different
+              buckets. */}
+          {mediaType === "movie" && (
+            <section aria-labelledby="discussion-heading">
+              <h2
+                id="discussion-heading"
+                className="font-display text-display-md text-fg uppercase"
+              >
+                Discussion
+              </h2>
+              <div className="mt-4">
+                <Suspense fallback={<CommentSectionSkeleton />}>
+                  <CommentSection scope={titleScope("movie", title.id)} />
+                </Suspense>
+              </div>
+            </section>
+          )}
         </div>
 
         <div className="mt-10">
