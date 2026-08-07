@@ -5,6 +5,7 @@ import "./globals.css";
 import { BottomNav } from "@/components/shell/bottom-nav";
 import { Footer } from "@/components/shell/footer";
 import { Sidebar } from "@/components/shell/sidebar";
+import { StorageBanner } from "@/components/storage/storage-banner";
 import { MergePrompt } from "@/components/sync/merge-prompt";
 import { RatingsProvider } from "@/lib/ratings";
 import { SyncProvider } from "@/lib/sync";
@@ -94,6 +95,11 @@ export default function RootLayout({
                 about why Step 4 kept getAccount() out of this layout. */}
             <SyncProvider>
               <MergePrompt />
+              {/* App-wide, above every page: a browser that will not persist
+                  anything is not a per-page condition, and the failure it
+                  causes (empty library, inert controls) is otherwise
+                  indistinguishable from having no data. */}
+              <StorageBanner />
               <TrackingProvider>
                 <RatingsProvider>{children}</RatingsProvider>
               </TrackingProvider>

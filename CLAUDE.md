@@ -2540,12 +2540,72 @@ range encoding is deliberately NOT preserved server-side).
         state, so it was state that did not need to exist.
       - 62 new tests (`merge.test.ts`, `reconcile.test.ts`) plus 11 database
         checks — 418 total across the suite.
-      - **Not verified in a browser.** The Chrome extension has been
-        disconnected for six sessions. What WAS verified: the conflict rules
-        against a real PostgreSQL 18 with a negative control, all three
-        migrations applying cleanly in order, lint / typecheck / 418 tests /
-        build, and the static/dynamic split holding. **Still owed**: a live
-        two-device round trip against the real project — sign in on a second
+      - **Not verified in a browser during the build.** The Chrome extension
+        has been disconnected for six sessions. What WAS verified: the conflict
+        rules against a real PostgreSQL 18 with a negative control, all three
+        migrations applying cleanly in order, lint / typecheck / tests / build,
+        and the static/dynamic split holding.
+- [x] **Step 5b** — Insecure-origin fixes and storage failure visibility.
+      A live two-device test (phone on `http://192.168.1.112:3000`) surfaced
+      what the build could not: tracking controls disabled, My Library empty,
+      and nothing anywhere saying why.
+      - **`crypto.randomUUID` and `crypto.subtle` are SECURE-CONTEXT ONLY.**
+        They exist on `https://` and on `localhost` — which is exactly why
+        desktop was fine and the phone was not. On a plain-HTTP origin both are
+        `undefined` and calling them throws `TypeError`. Step 5 used both.
+        Consequences, each confirmed by simulating the environment in a test:
+        `appendWatchEvents` rejected **before its try block**, so every watch
+        event on a non-HTTPS origin was silently dropped (the call site is
+        `void appendWatchEvents(...)`, so the rejection was unhandled and
+        invisible); and `buildMergePlan` threw whenever the local watch log was
+        non-empty, so the first-login merge failed and no account data ever
+        arrived — which is the empty Library.
+      - **SHA-1 is now a plain-JS implementation used UNCONDITIONALLY**, not
+        "subtle if available, fallback otherwise". These ids are watch-log
+        primary keys and the whole "just run the merge again" strategy depends
+        on the same input producing the same id on every device — including one
+        device on HTTPS and another not. Two implementations of one critical
+        value is how a divergence ships, and the symptom would be the user's
+        entire pre-account history inserted a second time. Pinned by the
+        published RFC 4122 vector, plus a test asserting an insecure origin
+        derives ids **identical** to a secure one.
+      - `randomUuid()` falls back to `crypto.getRandomValues`, which is *not*
+        secure-context gated, so the fallback keeps real randomness.
+      - **Supabase's own auth-js was checked and is not the problem** — it
+        guards `crypto.subtle` explicitly and degrades PKCE to `plain`. The
+        crypto fault was entirely ours.
+      - **`ready` can no longer stick.** `TrackingProvider` and
+        `RatingsProvider` had no `.catch()` on the initial read, so a rejected
+        read left `ready` false forever — and `ready` gates everything:
+        `TrackingActions` renders `disabled`, `TrackingBadge` renders `null`,
+        My Library renders its loading branch. An app that refuses every
+        interaction and looks empty, with no explanation. The storage layer is
+        written so reads degrade to `null` rather than throwing, so in
+        principle this could not fire; that is precisely why it needed
+        handling. **Fail open and loud, never silent and frozen.**
+      - **Blocked storage is now impossible to mistake for "no data".**
+        `StorageBanner` (app-wide, in the layout) fires on the `memory` driver;
+        My Library has a distinct `loadFailed` state that says the data could
+        not be READ rather than that there is none; and a `DiagnosticsPanel`
+        on Profile reports storage driver, secure context, account, and sync
+        phase in one place. It is on **Profile, not `/account`**, because the
+        point is diagnosing a device where something is broken and `/account`
+        needs a working session — one of the things that might be broken.
+      - **`useSyncExternalStore`, not `useState` + `useEffect`**, for reading
+        storage status: a synchronous `setState` in an effect is what
+        `react-hooks/set-state-in-effect` rejects (third time in this
+        codebase), and it gets the SSR snapshot right by construction, so the
+        banner never flashes into server HTML and back out.
+      - **Root cause of the disabled controls specifically is still
+        unconfirmed.** The crypto faults fully explain the empty Library; they
+        do not obviously explain `ready` staying false, and that could not be
+        diagnosed remotely without a console. Both are now fixed or made
+        impossible to reach silently, and the diagnostics panel answers it in
+        one tap on the device itself.
+      - 5 new tests simulating a non-secure context (including a guard
+        asserting the simulation really is missing both APIs, so the block
+        cannot pass trivially) — 423 total.
+      - **Still owed**: a live two-device round trip — sign in on a second
         device, edit both sides offline, reconnect, and confirm convergence.
 - [ ] **Step 6** — Spoiler-safe comments, shared lists
 

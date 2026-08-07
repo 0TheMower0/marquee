@@ -119,12 +119,23 @@ export async function appendWatchEvents(events: WatchEvent[]): Promise<void> {
   // Signed out, events are stored without an id exactly as before — the merge
   // derives a deterministic v5 for those from (userId, dayKey, index). No
   // store migration is involved either way; `id` is optional on WatchEvent.
-  const signedIn = getSyncUser() !== null;
-  const stamped = signedIn
-    ? events.map((event) => (event.id ? event : { ...event, id: randomUuid() }))
-    : events;
+  let stamped = events;
 
   try {
+    // Inside the try, deliberately. This used to sit above it, and
+    // `randomUuid()` threw on any non-secure origin (`crypto.randomUUID` is
+    // secure-context only) — so the whole function rejected before it ever
+    // reached the write, and because every call site is `void
+    // appendWatchEvents(...)` the failure was an unhandled rejection nobody
+    // saw. Every watch event on a plain-HTTP origin was silently dropped.
+    // `randomUuid` no longer throws, but this function's contract is "never
+    // throws", and that should hold structurally rather than by depending on
+    // what its helpers happen to do.
+    const signedIn = getSyncUser() !== null;
+    stamped = signedIn
+      ? events.map((event) => (event.id ? event : { ...event, id: randomUuid() }))
+      : events;
+
     const existing = (await watchLogStore.get(day)) ?? [];
     await watchLogStore.set(day, [...existing, ...stamped]);
   } catch (error) {

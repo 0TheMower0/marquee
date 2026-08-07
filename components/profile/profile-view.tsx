@@ -1,6 +1,7 @@
 "use client";
 
 import { BadgeCase } from "@/components/badges/badge-case";
+import { DiagnosticsPanel } from "@/components/storage/diagnostics-panel";
 import { XpSummary } from "@/components/profile/xp-summary";
 import { StreakSummary } from "@/components/streak/streak-summary";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,11 @@ export function ProfileView() {
       <XpSummary />
       <StreakSummary />
       <BadgeCase />
+
+      {/* On Profile rather than /account on purpose: this is for diagnosing a
+          device where something is wrong, and /account needs a working session
+          — which is one of the things that might be wrong. */}
+      <DiagnosticsPanel />
     </div>
   );
 }

@@ -36,12 +36,22 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    ratingsStore.getAll().then((all) => {
-      if (!cancelled) {
-        setEntries(all);
-        setReady(true);
-      }
-    });
+    ratingsStore
+      .getAll()
+      .then((all) => {
+        if (!cancelled) {
+          setEntries(all);
+          setReady(true);
+        }
+      })
+      // Same reasoning as TrackingProvider's catch: `ready` must always
+      // settle. A stuck `ready` here would leave the rating control inert on
+      // every title with no explanation. Fail open and loud, never silent and
+      // frozen.
+      .catch((error) => {
+        console.error("[ratings] initial read failed; continuing empty.", error);
+        if (!cancelled) setReady(true);
+      });
     return () => {
       cancelled = true;
     };

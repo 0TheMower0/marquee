@@ -145,7 +145,7 @@ function StatusSection({
  * Phase 2 Step 1 — see the note on hydration in that step's writeup.
  */
 export function LibraryView() {
-  const { ready, entries } = useTracking();
+  const { ready, loadFailed, entries } = useTracking();
   // Ratings hydrates independently and does NOT gate the page — it's a local
   // read that resolves within a tick, same reasoning as `ready` itself. Until
   // it resolves, the Watched section simply renders unfiltered (`filter`
@@ -155,6 +155,31 @@ export function LibraryView() {
 
   if (!ready) {
     return <SkeletonGrid count={5} label="Loading your library" className="p-6 sm:p-8" />;
+  }
+
+  // An empty library and an unreadable one look identical, and mean opposite
+  // things. Saying "nothing here yet" to someone whose data simply could not
+  // be read is the single most alarming thing this page can do — especially to
+  // a signed-in user, who would reasonably conclude their account lost it.
+  if (loadFailed) {
+    return (
+      <div className="p-6 sm:p-8">
+        <h1 className="font-display text-display-lg text-fg uppercase">My Library</h1>
+        <div
+          role="alert"
+          className="border-danger/40 bg-danger/10 mt-6 max-w-prose space-y-2 rounded-md border px-4 py-3"
+        >
+          <p className="text-body-sm text-fg font-medium">
+            Couldn&rsquo;t read your library from this browser
+          </p>
+          <p className="text-meta text-fg-muted">
+            This is a problem reading local storage, not a sign that anything
+            was deleted. Nothing has been lost or overwritten — reloading, or
+            opening Marquee in a normal (non-private) window, usually fixes it.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   const all = Object.values(entries);

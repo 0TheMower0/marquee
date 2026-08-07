@@ -47,6 +47,10 @@ interface TrackingContextValue {
    * UI would flash more often than it would ever actually help.
    */
   ready: boolean;
+  /** The initial read from storage threw. `entries` is empty because it could
+   *  not be read, NOT because there is nothing tracked — a distinction the UI
+   *  must make, since the two look identical and mean opposite things. */
+  loadFailed: boolean;
   entries: Record<string, TrackingEntry>;
   getEntry: (id: string, mediaType: MediaType) => TrackingEntry | undefined;
   /**
@@ -139,15 +143,45 @@ const TrackingContext = createContext<TrackingContextValue | null>(null);
 export function TrackingProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<Record<string, TrackingEntry>>({});
   const [ready, setReady] = useState(false);
+  /** True when the initial read threw. Distinguishes "you have nothing
+   *  tracked" from "we could not read what you have" — two states that look
+   *  identical and mean opposite things. */
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    trackingStore.getAll().then((all) => {
-      if (!cancelled) {
-        setEntries(all);
-        setReady(true);
-      }
-    });
+    trackingStore
+      .getAll()
+      .then((all) => {
+        if (!cancelled) {
+          setEntries(all);
+          setReady(true);
+        }
+      })
+      // ====================================================================
+      // `ready` MUST ALWAYS SETTLE, EVEN WHEN THE READ FAILS
+      // ====================================================================
+      // Without this catch, a rejected initial read leaves `ready` false
+      // forever — and `ready` gates everything: TrackingActions renders
+      // `disabled`, TrackingBadge renders null, My Library renders its
+      // loading branch. The result is an app that looks like it has no data
+      // and refuses every interaction, with nothing anywhere explaining why.
+      // That is exactly what a live two-device test hit, and it is the worst
+      // possible presentation of a storage problem: indistinguishable from
+      // "your library is gone".
+      //
+      // The storage layer is written so reads degrade to null rather than
+      // throwing, so in principle this cannot fire. That is precisely the
+      // reason to handle it: an invariant that "cannot" break is one nobody
+      // will think to check when it does. Failing open — ready, empty, and
+      // loudly flagged — beats failing silent and frozen.
+      .catch((error) => {
+        console.error("[tracking] initial read failed; continuing empty.", error);
+        if (!cancelled) {
+          setLoadFailed(true);
+          setReady(true);
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -360,6 +394,7 @@ export function TrackingProvider({ children }: { children: ReactNode }) {
 
   const value: TrackingContextValue = {
     ready,
+    loadFailed,
     entries,
     getEntry: (id, mediaType) => entries[entryKey(mediaType, id)],
     setStatus,

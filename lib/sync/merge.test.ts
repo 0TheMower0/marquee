@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { RatingEntry } from "@/lib/ratings/types";
 import type { TitleSummary } from "@/lib/content/types";
@@ -11,7 +11,7 @@ import {
   type LocalSnapshot,
   type RemoteSnapshot,
 } from "./merge";
-import { isUuid, preAccountEventId, uuidV5 } from "./uuid";
+import { isUuid, preAccountEventId, randomUuid, uuidV5 } from "./uuid";
 import type { TrackedTitleRow, WatchedEpisodeRow } from "./types";
 
 /**
@@ -881,5 +881,88 @@ describe("uuid", () => {
     expect(isUuid(null)).toBe(false);
     // Wrong variant nibble.
     expect(isUuid("aaaaaaaa-bbbb-4ccc-1ddd-eeeeeeeeeeee")).toBe(false);
+  });
+});
+
+/* ==========================================================================
+ * Insecure origins — http://<lan-ip>:3000, and any non-HTTPS deployment
+ * ======================================================================= */
+
+describe("uuid on a NON-SECURE origin", () => {
+  /**
+   * `crypto.subtle` and `crypto.randomUUID` are secure-context only. They
+   * exist on https:// and on localhost, and are `undefined` on a plain-HTTP
+   * origin — which is how a phone reaches a dev server over the LAN, how any
+   * non-HTTPS deployment is reached, and the exact configuration that broke a
+   * live two-device test.
+   *
+   * `getRandomValues` is NOT gated, so it stays available and the fallback has
+   * real randomness.
+   */
+  const realCrypto = globalThis.crypto;
+
+  beforeEach(() => {
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: { getRandomValues: realCrypto.getRandomValues.bind(realCrypto) },
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: realCrypto,
+    });
+  });
+
+  it("confirms the simulated environment really is missing both APIs", () => {
+    // Without this the rest of the block could pass trivially against a
+    // still-secure context, proving nothing.
+    expect(globalThis.crypto.subtle).toBeUndefined();
+    expect(
+      (globalThis.crypto as { randomUUID?: unknown }).randomUUID,
+    ).toBeUndefined();
+  });
+
+  it("still produces the RFC 4122 v5 vector", async () => {
+    const dns = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+    expect(await uuidV5("www.example.com", dns)).toBe(
+      "2ed6657d-e927-568b-95e1-2665a8aea6a2",
+    );
+  });
+
+  it("derives IDENTICAL event ids to a secure origin", async () => {
+    // The one that actually matters. Two devices, one on HTTPS and one not,
+    // must derive the same id for the same pre-account event — otherwise a
+    // merge from the second device inserts the user's entire history again.
+    const insecure = await preAccountEventId(USER, "2026-07-01", 0);
+
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: realCrypto,
+    });
+    const secure = await preAccountEventId(USER, "2026-07-01", 0);
+
+    expect(insecure).toBe(secure);
+  });
+
+  it("still mints a valid random v4 without crypto.randomUUID", () => {
+    const id = randomUuid();
+    expect(isUuid(id)).toBe(true);
+    expect(id[14]).toBe("4");
+    expect(randomUuid()).not.toBe(id);
+  });
+
+  it("runs a full merge without throwing", async () => {
+    // The end-to-end regression: this threw `Cannot read properties of
+    // undefined (reading 'digest')` before the fix, so the first-login merge
+    // failed outright on every non-HTTPS origin.
+    const local = emptyLocal();
+    local.tracking["tv:100"] = tvEntry("100", "watched", { 1: [[1, 3]] });
+    local.watchLog["2026-07-01"] = [EPISODE_EVENT];
+
+    const plan = await buildMergePlan(USER, local, emptyRemoteSnapshot(), { now: NOW });
+    expect(plan.push.watch_events).toHaveLength(1);
+    expect(isUuid(plan.push.watch_events[0].id)).toBe(true);
   });
 });
