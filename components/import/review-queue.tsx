@@ -7,6 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ProgressBar } from "@/components/tracking/progress-bar";
 import type { TitleSummary } from "@/lib/content/types";
+import {
+  buildReviewUnits,
+  isUnitPending,
+  sortUnitsEasiestFirst,
+  type ReviewUnit,
+} from "@/lib/import/review-units";
 import { SOURCE_LABEL, type ResolvedRow } from "@/lib/import/types";
 import { cn } from "@/lib/utils/cn";
 
@@ -34,26 +40,25 @@ import { ManualSearch } from "./manual-search";
  * early imports less, never something guessed.
  */
 
-/** Easiest first: the highest-scoring top candidate leads. Momentum early,
- *  and the genuinely hard rows cluster at the end where a user can stop and
- *  leave them pending rather than grinding through them tired. */
-function reviewOrder(rows: readonly ResolvedRow[]): number[] {
-  return rows
-    .map((row, index) => ({ index, top: row.candidates[0]?.score ?? -1 }))
-    .sort((a, b) => b.top - a.top || a.index - b.index)
-    .map(({ index }) => index);
-}
-
-function needsReview(row: ResolvedRow): boolean {
-  return (
-    (row.bucket === "ambiguous" || row.bucket === "unmatched") &&
-    !row.skipped &&
-    row.chosen === null
-  );
-}
-
 function formatScore(score: number | null): string | null {
   return score === null ? null : `${score}/100`;
+}
+
+/**
+ * The line that makes a 62-row unit legible: what a single decision covers.
+ *
+ * Rendered only when a unit holds more than one row, so the common case — one
+ * film, one decision — gains no extra chrome.
+ */
+function unitCoverage(unit: ReviewUnit): string | null {
+  if (unit.rowCount <= 1) return null;
+
+  if (unit.episodeCount > 0) {
+    const seasons = `${unit.seasonCount} season${unit.seasonCount === 1 ? "" : "s"}`;
+    return `${unit.episodeCount} episodes across ${seasons}`;
+  }
+  // A film with several diary rows: rewatches.
+  return `${unit.rowCount} viewings`;
 }
 
 export function ReviewQueue({
@@ -62,36 +67,48 @@ export function ReviewQueue({
   onFinish,
 }: {
   rows: readonly ResolvedRow[];
-  /** Applied against the row's index in the ORIGINAL array, so a decision
-   *  survives re-sorting and resuming. */
-  onDecide: (index: number, decision: { chosen: TitleSummary | null; skipped: boolean }) => void;
+  /** Applied against EVERY original-array index the unit covers, so one
+   *  answer resolves all of them. */
+  onDecide: (
+    indices: readonly number[],
+    decision: { chosen: TitleSummary | null; skipped: boolean },
+  ) => void;
   onFinish: () => void;
 }) {
-  // Computed once from the rows as they arrived. Recomputing as decisions
-  // land would reshuffle the queue under the user's cursor mid-review.
-  const order = useMemo(() => reviewOrder(rows), [rows]);
-  const pending = useMemo(() => order.filter((index) => needsReview(rows[index])), [order, rows]);
+  // Built ONCE, from the rows as they first arrived. Recomputing as decisions
+  // land would reshuffle the queue under the user's cursor mid-review, which
+  // is the fastest way to make someone mis-click.
+  //
+  // A lazy `useState` initializer rather than a ref read during render —
+  // `react-hooks/refs` rejects the latter, correctly, and this expresses the
+  // same intent honestly: the value is derived once at mount and then owned.
+  // Safe because the resolved set does not change SHAPE after resolution
+  // finishes; only decisions on it do.
+  const [units] = useState(() => sortUnitsEasiestFirst(buildReviewUnits(rows)));
+
+  const pending = useMemo(
+    () => units.filter((unit) => isUnitPending(unit, rows)),
+    [units, rows],
+  );
 
   const [position, setPosition] = useState(0);
   const [searching, setSearching] = useState(false);
 
-  const total = useMemo(
-    () => order.filter((index) => rows[index].bucket === "ambiguous" || rows[index].bucket === "unmatched").length,
-    [order, rows],
-  );
-  const remaining = pending.length;
-  const reviewed = total - remaining;
+  const total = units.length;
+  const reviewed = total - pending.length;
 
-  const index = pending[Math.min(position, pending.length - 1)];
-  const current = index === undefined ? null : rows[index];
+  const unit = pending[Math.min(position, pending.length - 1)] ?? null;
+  const current = unit?.representative ?? null;
 
   function decide(decision: { chosen: TitleSummary | null; skipped: boolean }) {
-    if (index === undefined) return;
+    if (!unit) return;
     setSearching(false);
-    onDecide(index, decision);
-    // Position is NOT advanced: resolving the current row removes it from
+    // One answer, every row it covers. This is what makes 3,000 episodes 14
+    // decisions rather than a faster way of making 3,000.
+    onDecide(unit.indices, decision);
+    // Position is NOT advanced: resolving the current unit removes it from
     // `pending`, so the same position naturally shows the next one. Advancing
-    // as well would silently skip a row.
+    // as well would silently skip one.
   }
 
   useEffect(() => {
@@ -140,7 +157,7 @@ export function ReviewQueue({
     return () => document.removeEventListener("keydown", onKeyDown);
   });
 
-  if (!current) {
+  if (!current || !unit) {
     return (
       <div className="space-y-4 text-center">
         <h2 className="font-display text-display-md text-fg uppercase">Review complete</h2>
@@ -181,8 +198,13 @@ export function ReviewQueue({
           <span>{SOURCE_LABEL[row.source]}</span>
           <span>·</span>
           {/* The line number matters: it lets the user check our reading
-              against the actual file rather than against our summary of it. */}
-          <span>line {row.sourceLine}</span>
+              against the actual file rather than against our summary of it.
+              A grouped unit shows the RANGE, for the same reason. */}
+          <span>
+            {unit.firstLine === unit.lastLine
+              ? `line ${unit.firstLine}`
+              : `lines ${unit.firstLine}–${unit.lastLine}`}
+          </span>
         </div>
 
         <p className="font-display text-display-md text-fg mt-2 uppercase">
@@ -192,12 +214,36 @@ export function ReviewQueue({
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {row.year !== null && <Badge variant="outline">{row.year}</Badge>}
           {formatScore(row.score) && <Badge variant="accent">{formatScore(row.score)}</Badge>}
-          {row.watchedOn && <Badge variant="secondary">watched {row.watchedOn}</Badge>}
-          {row.isRewatch && <Badge variant="neutral">rewatch</Badge>}
+          {/* A single row shows its own date; a group shows its span, since
+              62 individual dates would be noise. */}
+          {unit.rowCount === 1 && row.watchedOn && (
+            <Badge variant="secondary">watched {row.watchedOn}</Badge>
+          )}
+          {row.isRewatch && unit.rowCount === 1 && <Badge variant="neutral">rewatch</Badge>}
           {row.originalTitle && (
             <span className="text-meta text-fg-subtle italic">{row.originalTitle}</span>
           )}
         </div>
+
+        {/* What this ONE answer covers. Only shown when it covers more than
+            the row above, so the common case gains no extra chrome. */}
+        {unitCoverage(unit) && (
+          <p className="text-body-sm text-accent mt-3">
+            {unitCoverage(unit)}
+            {unit.earliestDate && unit.latestDate && (
+              <span className="text-fg-subtle">
+                {unit.earliestDate === unit.latestDate
+                  ? ` · ${unit.earliestDate}`
+                  : ` · ${unit.earliestDate} to ${unit.latestDate}`}
+              </span>
+            )}
+          </p>
+        )}
+        {unit.rowCount > 1 && (
+          <p className="text-meta text-fg-subtle mt-1">
+            One answer here resolves all of them.
+          </p>
+        )}
       </section>
 
       {/* --- candidates ---------------------------------------------------- */}

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils/cn";
 import { committableRows } from "@/lib/import/commit";
+import { buildReviewUnits } from "@/lib/import/review-units";
 import type { MatchBucket, ResolvedRow } from "@/lib/import/types";
 
 /**
@@ -88,6 +89,12 @@ export function ImportPreview({
   const [open, setOpen] = useState<keyof Bucketed | null>(null);
 
   const committable = committableRows(rows).length;
+
+  // The number of DECISIONS, which is not the number of rows: a show's
+  // episodes and a film's rewatches each collapse to one. Counting rows here
+  // would advertise "review 3,000 rows" for what is actually 14 questions,
+  // and someone reading that would reasonably decide not to bother.
+  const decisions = useMemo(() => buildReviewUnits(rows).length, [rows]);
 
   const tiles: { key: keyof Bucketed; label: string; count: number; tone: string }[] = [
     {
@@ -185,15 +192,18 @@ export function ImportPreview({
         <p className="text-body-sm text-fg-muted">
           {`${groups.needsReview.length} ${
             groups.needsReview.length === 1 ? "row" : "rows"
-          } couldn't be matched confidently. Reviewing them is optional — importing now simply leaves them out, and they stay here if you come back.`}
+          } couldn't be matched confidently${
+            decisions === groups.needsReview.length
+              ? ""
+              : `, but they only need ${decisions} decision${decisions === 1 ? "" : "s"} — episodes of one show, and repeat viewings of one film, are answered together`
+          }. Reviewing is optional — importing now simply leaves them out, and they stay here if you come back.`}
         </p>
       )}
 
       <div className="flex flex-wrap items-center gap-2">
         {groups.needsReview.length > 0 && (
           <Button type="button" onClick={onReview}>
-            Review {groups.needsReview.length} row
-            {groups.needsReview.length === 1 ? "" : "s"}
+            {`Review ${decisions} title${decisions === 1 ? "" : "s"}`}
           </Button>
         )}
         <Button

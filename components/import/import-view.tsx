@@ -199,9 +199,15 @@ export function ImportView() {
   );
 
   const decide = useCallback(
-    (index: number, decision: { chosen: TitleSummary | null; skipped: boolean }) => {
+    (
+      indices: readonly number[],
+      decision: { chosen: TitleSummary | null; skipped: boolean },
+    ) => {
+      const targets = new Set(indices);
       setRows((previous) => {
-        const next = previous.map((row, i) => (i === index ? { ...row, ...decision } : row));
+        // One decision, applied to every row the review unit covers — a show's
+        // 62 episodes are one answer, not 62.
+        const next = previous.map((row, i) => (targets.has(i) ? { ...row, ...decision } : row));
         // Fire-and-forget: a persistence failure is already surfaced by
         // `persist`, and blocking each keystroke on a storage write would
         // make the queue feel broken.
