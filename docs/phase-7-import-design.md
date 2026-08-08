@@ -590,3 +590,197 @@ would bury that work inside a source-specific step, which is exactly the
 coupling `ImportRow` exists to prevent.
 
 None of A/B/C is started. This section is verification, not a plan.
+
+**Ordering B chosen.** Episode-level import ships as its own step (§12), Trakt
+on top of it (§13).
+
+---
+
+## 12. Episode-level import — proposal
+
+Status: **proposed, not built.**
+
+### 12.1 Merging against existing progress
+
+`TvTrackingEntry.watchedEpisodes` is `Record<season, EpisodeRange[]>` under the
+canonical invariant (sorted, non-overlapping, non-adjacent). The merge is a
+**union per season**, built from `addRange` in `lib/tracking/ranges.ts` — never
+`removeRange`, which import has no reason to ever call.
+
+Union is monotonic: `union(existing, imported) ⊇ existing`, so watched-episode
+count can only rise. That is the Step 1 never-demote guarantee, restated at
+episode granularity, and it holds by construction rather than by a check.
+
+**Except in exactly one case, and it is a trap worth naming.** A show marked
+watched through the coarse title-level button carries `status: "watched"` with
+**empty** ranges — CLAUDE.md's "two granularities of one fact". Union that with
+an imported 40 episodes and the result is 40 explicit episodes where the user
+previously asserted *the whole show*. Ranges grew; **apparent progress fell**.
+That is a demotion wearing the costume of an addition.
+
+Two ways out:
+
+- Fetch each such show's seasons and `reconcileCoarseWatched` before merging.
+  Correct, and costs a provider round trip per affected show during commit —
+  the sort of hidden cost the batching work in §6 exists to avoid.
+- **Skip the range merge for coarse-watched shows** and leave them coarse.
+
+**Proposed: skip**, on the reasoning that a coarse-watched show is *already at
+maximum progress*, so there is nothing an import can add to it — and the moment
+the user next touches one episode by hand, `reconcileCoarseWatched` expands it
+properly at the point of use, exactly as it does today. Nothing is lost that
+was not already implied.
+
+Crucially this only skips the RANGE merge. **Watch events are still written**,
+because the log is append-only and cannot demote anything — so the dates, which
+are the part an import uniquely supplies, still land. The two concerns split
+cleanly along the line that already exists in this codebase: progress answers
+*how much*, the log answers *when*.
+
+The preview reports these as a distinct line ("N shows already marked watched —
+dates imported, episode detail left as is") rather than folding them into a
+success count.
+
+### 12.2 Per-episode watch events, and episodes with no date
+
+An episode event is `k: "e"` with `s` and `e`; `isWatchEvent` rejects one
+missing either, so the coordinates are mandatory rather than optional.
+
+**No date means no event.** The range is still written — the user has seen the
+episode — but nothing enters the log. That is Step 1's rule unchanged, and it
+keeps the no-backfill promise: progress is a fact the source asserts, a date is
+not something we may invent.
+
+**⚠️ Trakt's `watched_at` is an INSTANT, not a calendar date, and this needs a
+second conversion function rather than reuse of `toDayKey`.**
+
+Step 1's `toDayKey` deliberately *validates and never converts*, because IMDb
+and Letterboxd both write bare `YYYY-MM-DD`. Trakt writes
+`2019-03-14T20:15:00.000Z`. Applying `toDayKey` to that would take the leading
+date portion, which is the **UTC** day — and for anyone in the Americas
+watching in the evening that is systematically tomorrow. It is precisely the
+bug `lib/watchlog/types.ts` exists to prevent, arriving through a different
+door.
+
+So episode import adds `instantToLocalDayKey(iso)`, which is `localDayKey(new
+Date(iso))` — the instant rendered in the importing device's local timezone.
+For a user who has not moved since watching, that is exactly right; for one who
+has, it is off by at most a day for late-evening viewings, which beats being
+wrong for most evenings everywhere west of Greenwich.
+
+The two functions must never be swapped, and each is wrong where the other
+belongs: `instantToLocalDayKey("2019-03-14")` parses as UTC midnight and reads
+back as 13 March locally. Both get doc comments naming the other, and a test
+asserts they disagree on the inputs where they should.
+
+**A bonus the earlier sources could not offer: `m`.** Step 1 omits minute-of-day
+because no supported format records a watch TIME. Trakt does, so episode events
+from Trakt carry `m: localMinuteOfDay(new Date(iso))` — real data for Year in
+Review's hour buckets rather than a fabricated one. `b` (bulk) stays off for
+the same reason as Step 1: these are real individual viewings.
+
+### 12.3 The sync seam, and the guard
+
+`recordEpisodeChanges(mediaType, titleId, before, after, at)` already exists and
+already diffs, so episode import calls it with the pre- and post-merge maps.
+Because the merge is a union, the `removed` half of that diff is always empty —
+an import cannot tombstone an episode.
+
+**The guard matters more here than the code does**, because this is the exact
+gap just fixed. `commit-sync.test.ts`'s general guard currently maps reported
+write kinds to expected outbox tables:
+
+```ts
+const expected = {
+  title:  ["tracked_titles"],
+  event:  ["watch_events"],
+  rating: ["ratings", "rating_notes"],
+};
+```
+
+Adding an `episodes` kind means adding `episodes: ["watched_episodes"]`. That
+alone would be weak — it guards the kind someone remembered to add. So the
+guard gains one assertion first: **every key `commitRow` reports must be
+present in `expected`**, failing with a message naming the unknown kind.
+
+That inverts the failure mode. Today, adding a write kind without a recorder
+ships silently. With that assertion, adding a write kind at all forces whoever
+adds it to declare which table it syncs to — and if it syncs to none, they have
+to write that down deliberately rather than by omission.
+
+### 12.4 What an ambiguous episode row looks like
+
+The one-row-at-a-time rule survives, and the reason is a fact about the data:
+**for an episode row the ambiguity is about the SHOW, never the episode.** A
+source gives show title, season number, episode number. Once the show is
+resolved, the numbers carry over mechanically — there is no second decision to
+make.
+
+So episode rows are **collapsed into one review unit per show** before the
+queue ever sees them:
+
+```
+┌─ Reviewing 3 of 12 ─────────────────────────────────┐
+│  FROM YOUR FILE                    lines 41–102      │
+│  Breaking Bad                                        │
+│  62 episodes across 5 seasons · 2008                 │
+│  earliest 2019-03-14 · latest 2019-06-02             │
+│                                                      │
+│  BEST MATCHES                                        │
+│  [1] ▣  Breaking Bad      2008  Series               │
+│         title matches exactly, year matches          │
+└──────────────────────────────────────────────────────┘
+```
+
+A 3,000-episode Trakt history across 14 shows is **at most 14 decisions**, not
+3,000 — and that is not a shortcut, it is the honest number of choices the user
+actually has. One decision resolves every episode under it.
+
+Concretely this means the queue is driven by a `ReviewUnit` rather than a
+`ResolvedRow`: a title-level row is a unit of one, an episode group is a unit
+of N. The keyboard model, the sorting, the skip semantics and
+`committableRows`' decided-only rule all carry over unchanged.
+
+**Numbering mismatches are reported, not reviewed.** TVDB-derived and TMDB
+episode numbering genuinely disagree for some shows (anime and specials-heavy
+runs especially), so an imported S1E15 may not exist in TMDB's season 1. Once
+the show is chosen we already know its season shape, so the preview can say "9
+episodes in your file aren't in this show's seasons — skipped". There is
+nothing a user could usefully decide there, and turning it into nine more
+review decisions would be busywork that reads as diligence. Ranges are clamped
+to real season length on read anyway (CLAUDE.md), so the failure is contained
+either way.
+
+---
+
+## 13. Trakt — and the one field that must be impossible to get wrong
+
+Status: **proposed, not built.** Depends on §12.
+
+The VIP export carries **both `rating` (the user's own score) and
+`trakt_rating` (the community average)**. Reading the wrong column would
+replace a user's entire rating history with crowd averages — every row
+plausible, every row wrong, and nothing anywhere to notice it. It is the most
+destructive single field in any format this project supports.
+
+A comment is not sufficient protection for that. The design:
+
+1. **One function, `readTraktUserRating(record)`, is the only place any rating
+   column is read.** Its doc names the hazard. No other Trakt code touches
+   either column.
+2. **`trakt_rating` is explicitly discarded**, by name, in that function —
+   present in the code as a thing being rejected rather than absent and
+   therefore invisible.
+3. **The test uses values that cannot be confused.** A fixture where the two
+   columns hold *different, both-plausible* numbers (`rating=9`,
+   `trakt_rating=7`), asserting the parsed score derives from `rating`. A
+   second fixture where the user has NOT rated a title (`rating` empty,
+   `trakt_rating` populated) asserting the result is `null` — this is the
+   dangerous shape, because a naive fallback chain would silently substitute
+   the community score for exactly the titles the user chose not to rate.
+4. **A whole-file assertion** that no Trakt-parsed `ImportRow` in a mixed
+   fixture ever carries a score equal to its row's `trakt_rating`.
+
+Point 3's second fixture is the one that matters. The first mistake is reading
+the wrong column, which any test catches; the subtler one is reading the right
+column and *falling back* to the wrong one when it is empty.
