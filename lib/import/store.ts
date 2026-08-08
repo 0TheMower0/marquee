@@ -136,6 +136,55 @@ export const importJobStore = defineStore<ImportJob>({
   validate: isImportJob,
 });
 
+export interface NewJobInput {
+  importId: string;
+  fileName: string;
+  source: ImportSource;
+  resolved: readonly ResolvedRow[];
+  options: CommitOptions;
+}
+
+export function buildJob(input: NewJobInput, now: Date = new Date()): ImportJob {
+  return {
+    importId: input.importId,
+    fileName: input.fileName,
+    source: input.source,
+    createdAt: now,
+    updatedAt: now,
+    status: "review",
+    rows: input.resolved.map(toStoredRow),
+    cursor: 0,
+    options: input.options,
+    committed: { titles: 0, events: 0, ratings: 0 },
+  };
+}
+
+/**
+ * Persists a job.
+ *
+ * ============================================================================
+ * THIS DELIBERATELY DOES NOT SWALLOW A QUOTA FAILURE
+ * ============================================================================
+ * Everywhere else in this app a failed local write degrades quietly, because
+ * losing a nicety beats interrupting the user. Here it must not: the whole
+ * value of saving a job is the promise that the user can close the tab and
+ * come back. Swallowing the error keeps that promise on screen while breaking
+ * it in fact, and the user only finds out after losing an hour of review
+ * decisions.
+ *
+ * So the `StorageError` propagates and the caller is expected to tell the
+ * user plainly that progress cannot be saved and this import needs finishing
+ * in one sitting. That is the same reasoning `takePreMergeBackup` uses for
+ * aborting a merge on a failed backup write — when the write IS the safety
+ * net, a silent failure is worse than a loud one.
+ *
+ * The import itself is unaffected: resolution and commit both work entirely
+ * from in-memory state.
+ */
+export async function saveJob(job: ImportJob): Promise<void> {
+  await importJobStore.set(job.importId, { ...job, updatedAt: new Date() });
+}
+
 /** Every saved job, newest first. */
 export async function listJobs(): Promise<ImportJob[]> {
   const jobs = await importJobStore.getAll();
