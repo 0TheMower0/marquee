@@ -2,6 +2,7 @@ import type { CsvTable } from "../csv";
 import type { ImportRow, ImportSource } from "../types";
 
 import { detectImdbSource, parseImdbRatings, parseImdbWatchlist } from "./imdb";
+import { detectTraktSource, parseTrakt } from "./trakt";
 import {
   detectLetterboxdSource,
   parseLetterboxdDiary,
@@ -22,7 +23,16 @@ export { isAmbiguousLetterboxdTable } from "./letterboxd";
  * incidental so a later source added to this list gets the same consideration.
  */
 export function detectSource(table: CsvTable, filename?: string): ImportSource | null {
-  return detectImdbSource(table) ?? detectLetterboxdSource(table, filename);
+  // Trakt before Letterboxd: a Trakt community export has a `title` column
+  // and no `Name`, so it cannot be mistaken for Letterboxd — but the VIP
+  // export's `year` + `title` shape is close enough to warrant checking the
+  // more specific signal (a timestamp column named watched_at/rated_at/...)
+  // first. IMDb stays first of all: only it has `Const`.
+  return (
+    detectImdbSource(table) ??
+    detectTraktSource(table) ??
+    detectLetterboxdSource(table, filename)
+  );
 }
 
 const PARSERS: Record<ImportSource, (table: CsvTable) => ImportRow[]> = {
@@ -32,6 +42,9 @@ const PARSERS: Record<ImportSource, (table: CsvTable) => ImportRow[]> = {
   "letterboxd-ratings": parseLetterboxdRatings,
   "letterboxd-watched": parseLetterboxdWatched,
   "letterboxd-watchlist": parseLetterboxdWatchlist,
+  "trakt-history": (table) => parseTrakt(table, "trakt-history"),
+  "trakt-ratings": (table) => parseTrakt(table, "trakt-ratings"),
+  "trakt-watchlist": (table) => parseTrakt(table, "trakt-watchlist"),
 };
 
 /** Parses a table as a KNOWN source. Detection is a separate step so the UI

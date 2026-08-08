@@ -18,7 +18,10 @@ export type ImportSource =
   | "letterboxd-diary"
   | "letterboxd-ratings"
   | "letterboxd-watchlist"
-  | "letterboxd-watched";
+  | "letterboxd-watched"
+  | "trakt-history"
+  | "trakt-ratings"
+  | "trakt-watchlist";
 
 export const SOURCE_LABEL: Record<ImportSource, string> = {
   "imdb-ratings": "IMDb ratings",
@@ -27,6 +30,11 @@ export const SOURCE_LABEL: Record<ImportSource, string> = {
   "letterboxd-ratings": "Letterboxd ratings",
   "letterboxd-watchlist": "Letterboxd watchlist",
   "letterboxd-watched": "Letterboxd watched",
+  "trakt-history": "Trakt watch history",
+  "trakt-ratings": "Trakt ratings",
+  // Covers `listed_at` (a custom list) and `collected_at` (owned media).
+  // Neither asserts having watched anything, so both import as watchlist.
+  "trakt-watchlist": "Trakt watchlist or collection",
 };
 
 /**

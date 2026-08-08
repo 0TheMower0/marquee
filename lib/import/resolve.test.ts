@@ -178,6 +178,41 @@ describe("resolveRows — tier order", () => {
     expect(resolved[0].chosen).toBeNull();
   });
 
+  it("DOES look up an episode row that carries coordinates", async () => {
+    // The drift this catches: `needsLookup` used to have its own
+    // `mediaTypeHint !== "episode"` copy of the classifier's rule. When
+    // episode import shipped and only the classifier was updated, every
+    // episode row was skipped before any lookup and fell out `unmatched`
+    // with zero candidates — for a show whose id resolved perfectly well.
+    const findByExternalId = vi.fn(async () => [title("1396", "Breaking Bad", 2008, "tv")]);
+    const resolved = await resolveRows(
+      [
+        row({
+          imdbId: "tt0903747",
+          title: "Breaking Bad",
+          year: 2008,
+          mediaTypeHint: "episode",
+          season: 5,
+          episode: 14,
+        }),
+      ],
+      deps({ findByExternalId }),
+    );
+
+    expect(findByExternalId).toHaveBeenCalledTimes(1);
+    expect(resolved[0].bucket).toBe("exact");
+    expect(resolved[0].chosen?.id).toBe("1396");
+  });
+
+  it("counts a coordinate-carrying episode row in the upstream cost", () => {
+    expect(
+      lookupCount([
+        row({ title: "BB", mediaTypeHint: "episode", season: 1, episode: 1 }),
+        row({ title: "BB", mediaTypeHint: "episode", season: 1, episode: 2 }),
+      ]),
+    ).toBe(1);
+  });
+
   it("spends no lookup at all on an unsupported row", async () => {
     const findByExternalId = vi.fn(async () => []);
     const searchTitles = vi.fn(async () => page([]));

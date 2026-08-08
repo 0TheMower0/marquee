@@ -4,7 +4,7 @@ import { ImportView } from "@/components/import/import-view";
 
 export const metadata: Metadata = {
   title: "Import",
-  description: "Bring your history in from IMDb or Letterboxd.",
+  description: "Bring your history in from IMDb, Letterboxd or Trakt.",
 };
 
 /**
@@ -20,7 +20,7 @@ export default function ImportPage() {
       <header className="mb-8">
         <h1 className="font-display text-display-xl text-fg uppercase">Import</h1>
         <p className="text-body-sm text-fg-muted mt-2 max-w-prose">
-          Bring your history in from IMDb or Letterboxd. Everything is matched
+          Bring your history in from IMDb, Letterboxd or Trakt. Everything is matched
           and shown to you first — nothing is written to your library until you
           say so.
         </p>

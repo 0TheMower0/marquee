@@ -148,10 +148,15 @@ function computeSignals(row: ImportRow, candidate: TitleSummary): MatchSignals {
 
   // "movie" and "tv" are the only two values a candidate can have; a row's
   // hint of "unknown" agrees with neither and conflicts with neither.
-  const typeAgrees = row.mediaTypeHint === candidate.mediaType;
+  //
+  // An "episode" hint implies "tv": an episode belongs to a series by
+  // definition, so it should earn the agreement bonus against a show AND the
+  // conflict penalty against a film. Leaving it as its own value gave episode
+  // rows neither, letting a film match one without penalty.
+  const impliedType = row.mediaTypeHint === "episode" ? "tv" : row.mediaTypeHint;
+  const typeAgrees = impliedType === candidate.mediaType;
   const typeConflicts =
-    (row.mediaTypeHint === "movie" || row.mediaTypeHint === "tv") &&
-    row.mediaTypeHint !== candidate.mediaType;
+    (impliedType === "movie" || impliedType === "tv") && impliedType !== candidate.mediaType;
 
   return { titleIdentical, titleDice, yearDelta, typeAgrees, typeConflicts };
 }

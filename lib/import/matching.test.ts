@@ -138,6 +138,25 @@ describe("rankCandidates", () => {
     expect(ranked.map((c) => c.summary.id)).toEqual(["first", "second"]);
   });
 
+  it("treats an episode hint as implying tv, so a film is penalised", () => {
+    // An episode belongs to a series by definition. Left as its own value,
+    // an "episode" hint earned neither the agreement bonus nor the conflict
+    // penalty, and a film could match an episode row unpenalised.
+    const episode = row({
+      title: "Fargo",
+      year: 2014,
+      mediaTypeHint: "episode",
+      season: 1,
+      episode: 1,
+    });
+    const ranked = rankCandidates(episode, [
+      title("film", "Fargo", 2014, "movie"),
+      title("show", "Fargo", 2014, "tv"),
+    ]);
+    expect(ranked[0].summary.id).toBe("show");
+    expect(ranked[1].signals.typeConflicts).toBe(true);
+  });
+
   it("sinks a candidate of the wrong media type", () => {
     const ranked = rankCandidates(row({ title: "Fargo", year: 1996, mediaTypeHint: "movie" }), [
       title("tv", "Fargo", 1996, "tv"),
@@ -282,10 +301,27 @@ describe("classifyRanked — the rule that must not erode", () => {
     expect(classifyRanked(theHeat, ranked)).toBe("ambiguous");
   });
 
-  it("is unsupported for a TV episode row regardless of candidates", () => {
-    const episode = row({ mediaTypeHint: "episode" });
+  it("is unsupported for an episode row with NO coordinates", () => {
+    // An IMDb `tvEpisode` row names an episode but supplies no season or
+    // episode number, so there is nothing to write.
+    const episode = row({ mediaTypeHint: "episode", season: null, episode: null });
     const ranked = rankCandidates(episode, [title("a", "Gravity", 2013)]);
     expect(classifyRanked(episode, ranked)).toBe("unsupported");
+  });
+
+  it("SUPPORTS an episode row that carries coordinates", () => {
+    // Trakt supplies season_number/episode_number, and design doc §12 built
+    // the commit path for them — so these must reach it rather than being
+    // bucketed away.
+    const episode = row({
+      title: "Breaking Bad",
+      year: 2008,
+      mediaTypeHint: "episode",
+      season: 5,
+      episode: 14,
+    });
+    const ranked = rankCandidates(episode, [title("a", "Breaking Bad", 2008, "tv")]);
+    expect(classifyRanked(episode, ranked)).toBe("confident");
   });
 });
 

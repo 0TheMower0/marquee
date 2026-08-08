@@ -1,6 +1,7 @@
 import { parseCsvTable, type CsvTable } from "./csv";
 import { importIdFor } from "./ids";
 import { detectSource, isAmbiguousLetterboxdTable, parseAs } from "./sources";
+import { hasNoResolvablePath, unresolvableIdColumns } from "./sources/trakt";
 import type { ImportRow, ImportSource } from "./types";
 import { ZipError, csvEntries, looksLikeZip, readZip } from "./zip";
 
@@ -49,6 +50,23 @@ export interface ParsedFile {
   rows: ImportRow[];
 }
 
+/**
+ * A file that parsed fine but whose rows cannot be matched automatically.
+ *
+ * Surfaced BEFORE resolution, deliberately. A community-tool Trakt export
+ * configured with `trakt` or `tvdb` ids has no id we can resolve and no
+ * `year` column, so every row would land in the review queue — and finding
+ * that out after a multi-minute resolve, having spent the upstream budget, is
+ * the worst possible moment. Re-exporting with a different id format is a
+ * cheap thing to go and do, but only if you learn you need to.
+ */
+export interface ImportWarning {
+  fileName: string;
+  kind: "no-resolvable-id";
+  /** Column names the export used that we cannot resolve, for the message. */
+  columns: string[];
+}
+
 export interface ParseResult {
   /** Deterministic from the file's bytes. Re-selecting the same export
    *  yields the same id, which is how a repeat import is recognized. */
@@ -58,6 +76,8 @@ export interface ParseResult {
   /** Files that are not a supported export at all, named so the user can see
    *  which ones were ignored rather than wondering why a count looks low. */
   unrecognized: string[];
+  /** Non-fatal: the import can proceed, but the user should know first. */
+  warnings: ImportWarning[];
 }
 
 export const LETTERBOXD_AMBIGUOUS_CHOICES = [
@@ -88,6 +108,7 @@ export async function parseImportFile(
   const files: ParsedFile[] = [];
   const ambiguous: AmbiguousFile[] = [];
   const unrecognized: string[] = [];
+  const warnings: ImportWarning[] = [];
 
   const sources: { name: string; text: string }[] = [];
 
@@ -108,6 +129,13 @@ export async function parseImportFile(
     const outcome = classifyTable(name, table);
     if (outcome.kind === "parsed") {
       files.push({ fileName: name, source: outcome.source, rows: parseAs(table, outcome.source) });
+      if (hasNoResolvablePath(table)) {
+        warnings.push({
+          fileName: name,
+          kind: "no-resolvable-id",
+          columns: unresolvableIdColumns(table),
+        });
+      }
     } else if (outcome.kind === "ambiguous") {
       // Only the TEXT crosses the worker boundary — see the note on
       // `AmbiguousFile.text`.
@@ -117,7 +145,7 @@ export async function parseImportFile(
     }
   }
 
-  return { importId, files, ambiguous, unrecognized };
+  return { importId, files, ambiguous, unrecognized, warnings };
 }
 
 /** Applies a user's answer to an ambiguous file. Kept here rather than in the

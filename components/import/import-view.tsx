@@ -9,7 +9,12 @@ import type { TitleSummary } from "@/lib/content/types";
 import { parseFile, resolveAll, type ResolveProgress } from "@/lib/import/client";
 import { commitRow, committableRows, finishCommit } from "@/lib/import/commit";
 import { importEventId } from "@/lib/import/ids";
-import { resolveAmbiguous, type AmbiguousFile, type ParsedFile } from "@/lib/import/parse-file";
+import {
+  resolveAmbiguous,
+  type AmbiguousFile,
+  type ImportWarning,
+  type ParsedFile,
+} from "@/lib/import/parse-file";
 import {
   buildJob,
   findCompletedJob,
@@ -38,6 +43,10 @@ type Stage =
   | { kind: "idle" }
   | { kind: "parsing" }
   | { kind: "asking"; pending: AmbiguousFile[]; parsed: ParsedFile[]; importId: string }
+  /** Parsed fine, but nothing in it can be matched automatically. Shown
+   *  BEFORE resolution so the user can go and re-export instead of spending
+   *  minutes discovering it. */
+  | { kind: "warned"; warnings: ImportWarning[]; parsed: ParsedFile[]; importId: string }
   | { kind: "resolving"; progress: ResolveProgress }
   | { kind: "preview" }
   | { kind: "review" }
@@ -152,7 +161,7 @@ export function ImportView() {
             kind: "error",
             message:
               parse.unrecognized.length > 0
-                ? `We didn't recognize ${parse.unrecognized.join(", ")} as an IMDb or Letterboxd export.`
+                ? `We didn't recognize ${parse.unrecognized.join(", ")} as an IMDb, Letterboxd or Trakt export.`
                 : "That file isn't a supported export.",
           });
           return;
@@ -162,6 +171,16 @@ export function ImportView() {
           setStage({
             kind: "asking",
             pending: parse.ambiguous,
+            parsed: parse.files,
+            importId: parse.importId,
+          });
+          return;
+        }
+
+        if (parse.warnings.length > 0) {
+          setStage({
+            kind: "warned",
+            warnings: parse.warnings,
             parsed: parse.files,
             importId: parse.importId,
           });
@@ -280,6 +299,46 @@ export function ImportView() {
         onAnswer={(source) => void answerAmbiguous(source)}
         onCancel={() => void answerAmbiguous(null)}
       />
+    );
+  }
+
+  if (stage.kind === "warned") {
+    return (
+      <div className="mx-auto max-w-xl space-y-4">
+        <div className="border-warning/40 bg-warning/10 flex gap-3 rounded-md border px-4 py-3">
+          <AlertIcon className="text-warning mt-0.5 size-5 shrink-0" />
+          <div className="space-y-2">
+            <p className="text-body-sm text-fg font-medium">
+              This export can&rsquo;t be matched automatically
+            </p>
+            <p className="text-meta text-fg-muted">
+              {stage.warnings[0].columns.length > 0
+                ? `${stage.warnings[0].fileName} identifies titles by ${stage.warnings[0].columns.join(" and ")} id, which we can't look up, and it has no release year to match on instead.`
+                : `${stage.warnings[0].fileName} carries no id we can look up and no release year to match on instead.`}{" "}
+              Every row would end up in the review queue for you to resolve by
+              hand.
+            </p>
+            <p className="text-meta text-fg-muted">
+              Re-exporting with <strong>IMDb</strong> or <strong>TMDB</strong> ids
+              instead would match almost everything automatically — worth doing
+              before spending time here.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={reset}>
+            Use a different export
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => void startResolve(stage.parsed, stage.importId)}
+          >
+            Continue anyway
+          </Button>
+        </div>
+      </div>
     );
   }
 

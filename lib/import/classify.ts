@@ -25,13 +25,26 @@ import type { ImportRow, MatchBucket, ResolvedRow } from "./types";
  *     them is.
  */
 
-/** Media-type hints this step cannot import. Surfaced in the preview rather
- *  than dropped, so the user can see the rows exist. IMDb TV episodes ARE
- *  resolvable (TMDB `/find` returns `tv_episode_results`) and are deferred,
- *  not impossible — design doc §9. */
-function isUnsupported(row: ImportRow): boolean {
-  return row.mediaTypeHint === "episode";
+/**
+ * Rows this importer still cannot write.
+ *
+ * Episode rows WITH coordinates are supported since design doc §12 — they
+ * merge into `watchedEpisodes` and log per-episode watch events.
+ *
+ * Episode rows WITHOUT coordinates are not, and the distinction is a fact
+ * about the sources rather than a limitation we chose: Trakt supplies
+ * `season_number`/`episode_number`, while IMDb names an episode and gives
+ * none — its `Const` for a `tvEpisode` row is the EPISODE's own IMDb id, so
+ * resolving it needs TMDB's `tv_episode_results` (design doc §9). Those rows
+ * are surfaced in the preview rather than dropped, so the user can see they
+ * were in the file.
+ */
+export function isUnsupportedRow(row: ImportRow): boolean {
+  return row.mediaTypeHint === "episode" && (row.season === null || row.episode === null);
 }
+
+/** Local alias, kept so the call sites below read unchanged. */
+const isUnsupported = isUnsupportedRow;
 
 /**
  * Whether a scored candidate is an exact agreement on both title and year.

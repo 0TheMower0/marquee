@@ -50,8 +50,8 @@ export function ImportDropzone({
       </h2>
       <p className="text-body-sm text-fg-muted mt-2 max-w-prose">
         A Letterboxd export <code className="text-accent">.zip</code>, or a single{" "}
-        <code className="text-accent">.csv</code> from IMDb or Letterboxd. Nothing is
-        written until you review what was matched.
+        <code className="text-accent">.csv</code> from IMDb, Letterboxd or Trakt.
+        Nothing is written until you review what was matched.
       </p>
 
       <input

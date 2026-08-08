@@ -1,6 +1,11 @@
 import type { PagedResult, TitleSummary } from "@/lib/content/types";
 
-import { resolveByExternalId, resolveByTitle, unmatchedRow } from "./classify";
+import {
+  isUnsupportedRow,
+  resolveByExternalId,
+  resolveByTitle,
+  unmatchedRow,
+} from "./classify";
 import { normalizeTitle } from "./normalize";
 import type { ImportRow, ResolvedRow } from "./types";
 
@@ -44,10 +49,28 @@ export function dedupKey(row: ImportRow): string {
   return `title:${normalizeTitle(row.title)}:${row.year ?? "?"}`;
 }
 
-/** Rows that need no lookup at all: this step cannot import them, so spending
- *  a request to find out what they are would be pure waste. */
+/**
+ * Rows that need no lookup at all: this step cannot import them, so spending
+ * a request to find out what they are would be pure waste.
+ *
+ * ============================================================================
+ * ONE PREDICATE, IMPORTED — NOT A SECOND COPY
+ * ============================================================================
+ * This used to be its own `row.mediaTypeHint !== "episode"` check, duplicating
+ * what `classify.ts` already knew. When episode import shipped and the
+ * classifier's copy was updated, this one was not — so every episode row was
+ * silently skipped before any lookup and fell out as `unmatched`, with zero
+ * candidates, for a show whose IMDb id resolved perfectly well on its own.
+ *
+ * Nothing failed. The endpoint returned 200 and the UI showed "No matches
+ * found", which is indistinguishable from a genuine miss. It was caught by
+ * querying `/api/content/find/tt0903747` by hand and seeing it answer
+ * correctly while the resolver claimed nothing.
+ *
+ * Importing the predicate makes the two impossible to disagree.
+ */
 function needsLookup(row: ImportRow): boolean {
-  return row.mediaTypeHint !== "episode";
+  return !isUnsupportedRow(row);
 }
 
 /** Runs `fn` over `items` with at most `limit` in flight. A plain
