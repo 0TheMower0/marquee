@@ -1436,8 +1436,8 @@ wrong, verify what the row you're writing actually contains first.
 | 3 *(done)* | Episode-level progress, "Up Next" engine |
 | 4 *(done)* | Rich detail pages with artwork-derived dynamic theming |
 | 5 *(step 6 outstanding)* | XP, levels, streaks, badges, stats dashboard; PWA manifest + service worker |
-| **6** *(current)* | API rate limiting, Supabase accounts + sync, spoiler-safe comments, shared lists — design in `docs/phase-6-sync-design.md` |
-| 7 | CSV importers (Trakt/Letterboxd/TV Time), new-episode notifications |
+| 6 *(done)* | API rate limiting, Supabase accounts + sync, spoiler-safe comments, shared lists — design in `docs/phase-6-sync-design.md` |
+| **7** *(current)* | CSV importers (IMDb + Letterboxd done; Trakt/TV Time next), new-episode notifications — design in `docs/phase-7-import-design.md` |
 | 8 | Year in Review |
 
 **Do not build ahead of the current phase.** Architect so later phases slot in;
@@ -3146,6 +3146,165 @@ range encoding is deliberately NOT preserved server-side).
         here in case the same symptom recurs at the same point in a future
         session, which would upgrade it from coincidence to something worth
         re-opening.
+
+**Phase 6 is complete.**
+
+## Phase 7 status
+
+Full design, including the verified column layouts of every supported export
+and the reasoning behind the matching rules, lives in
+**`docs/phase-7-import-design.md`**. Read §2.3 before touching the classifier —
+the rule about what auto-imports is the one thing in this feature that must
+not erode.
+
+- [x] **Step 1** — CSV importers for IMDb and Letterboxd (`lib/import/`,
+      `components/import/`, `app/import/`, plus `findByExternalId` across the
+      content layer).
+      - **Two premises in the original brief turned out to be wrong, and
+        checking beat assuming.** (1) **Letterboxd exports carry no IMDb or
+        TMDB id** — only a `Letterboxd URI`. So every Letterboxd row goes
+        through title+year matching and the review queue is that source's
+        MAIN path, not an edge case; only IMDb gets exact-id matching. (2)
+        **There is no verifiable Moviebase CSV export** — its backup is JSON
+        and Premium-only, and Moviebase's own migration guidance routes
+        through Trakt. Dropped in favour of the roadmap's Trakt, deferred to
+        Step 2 pending its own verification pass. Scraping Letterboxd film
+        pages for the TMDB id was considered and rejected: thousands of
+        third-party requests per import, against their terms, building a
+        load-bearing dependency on someone else's markup.
+      - **The rule that decides what silently enters a library.** Only an
+        external-id match, or a title+year match exact on BOTH fields **and
+        unique**, auto-imports. Everything else is a human decision.
+        Deliberately absent, and to stay absent: a numeric confidence
+        threshold (a dial gets turned down the first time the queue feels
+        long, and its failure mode is invisible) and a popularity tiebreak on
+        an otherwise exact tie (that is a remake). Popularity is a TIEBREAK
+        ONLY, never added to the score — popularity-as-score is precisely how
+        "Dune" gets silently matched to 2021 when the user meant 1984.
+      - **`agreesExactly` reads signals, never the score**, so retuning the
+        point weights cannot promote a candidate into `confident`. That is
+        only safe while every exactly-agreeing candidate outranks every other
+        one, and the arithmetic margin is just 5 points (a floor of 90 against
+        a ceiling of 85). A test pins it, because bumping `titleDiceMax` from
+        45 to 55 would break the invariant with nothing else complaining.
+      - **Article stripping deliberately collapses "Heat" and "The Heat".**
+        That is the cost of fixing the far more common IMDb-vs-TMDB
+        `"Godfather, The: Part II"` case, and it is contained by `confident`
+        also requiring an exact year: the collision produces a review-queue
+        row, never a silent wrong import. Tested as containment rather than as
+        absence of collision.
+      - **Commit is a cursor walk, not a transaction** — localStorage has
+        none, the same fact that forced per-record lazy migrations in
+        `lib/storage`. Additive only, reusing the first-login merge's
+        semantics: max progress on status (an existing `watched` is NEVER
+        demoted by an imported `watchlist`), local score wins unless the user
+        opts in, notes untouched, TV episode ranges untouched.
+      - **Dates are validated, never converted.** Letterboxd's `Watched Date`
+        is already a `YYYY-MM-DD` calendar date and is used VERBATIM as a
+        watch-log day key — parsing it through a `Date` would reintroduce
+        exactly the timezone bug `lib/watchlog/types.ts` exists to prevent.
+        Non-ISO formats are REJECTED rather than guessed at, because
+        `03/04/2019` is two different real dates depending on the reader and a
+        plausible wrong date is the invisible-failure this feature is built to
+        avoid. IMDb's `Date Rated` is not a watch date and is opt-in only.
+      - **Imported events omit `m` and `b`.** No source records a watch TIME,
+        and `lib/watchlog/types.ts` already anticipated this ("omitted when
+        genuinely unknown, which is what a Phase 7 CSV import would produce").
+        `b` (bulk) stays off because a diary row IS one real viewing on one
+        real date — flagging a decade of genuine history as bulk would
+        understate it in Year in Review.
+      - **Idempotency has two layers, because signed-out has no honest id.**
+        `importId` is a hash of the file's BYTES, so re-selecting the same
+        export is recognized and refused. Signed IN, events also get a
+        deterministic `uuidV5(userId, importId, sourceRowId)`, which makes the
+        same file imported on a second device dedupe server-side. Signed OUT
+        there is no `userId`, and inventing one would collide across accounts,
+        so events append with no id — the established pre-account shape the
+        first-login merge already knows how to assign.
+      - **Rate limiting: OMDb is never called at all.** The binding constraint
+        was our OWN limiter — `search` at 30/min would 429 thirty rows into a
+        3,000-row file. Solved by request SHAPE, not a looser limit:
+        `POST /api/import/resolve` takes batches of 25 under
+        `RATE_LIMITS.importResolve`, so 3,000 rows is ~120 requests. Rows are
+        deduped BEFORE resolving (a diary holds one row per viewing, so a film
+        watched four times is one lookup) and server-side concurrency is
+        capped at 4.
+      - **`findByExternalId` returns an ARRAY**, not a title-or-null, and the
+        counts are the contract: `[]` unknown, `[one]` unambiguous, `[two,…]`
+        ambiguous. TMDB's `/find` answers with five parallel result arrays and
+        an id can populate more than one; a nullable return would force the
+        provider to PICK, which is a policy decision it has no business
+        making. **The type checker caught that there are THREE provider
+        implementations, not two** — `httpProvider` needed it too, and got a
+        real implementation (`/api/content/find/[imdbId]`, under the ordinary
+        `read` limit) rather than a stub.
+      - **Job persistence is deliberately lossy**, because a naively stored
+        3,000-row job is several megabytes against a ~5MB budget the user's
+        ACTUAL library lives in: `overview` dropped from stored summaries,
+        candidates kept only while a row is undecided. `saveJob` lets a
+        `StorageError` PROPAGATE rather than degrading quietly — everywhere
+        else a failed local write costs a nicety, but here the write IS the
+        promise that you can close the tab and come back, so a silent failure
+        would keep that promise on screen while breaking it in fact. The UI
+        says to finish in one sitting.
+      - **The review queue is one row at a time and keyboard-first, and that
+        is the feature rather than polish.** A table of 200 rows with
+        dropdowns is faster to build and worse at the only job the screen has:
+        it invites skimming, and a skimmed decision is how a wrong match gets
+        committed. A wrong match is worse than no match, because an unmatched
+        row is visibly unmatched while a wrongly-matched one looks correct
+        forever. Rows are sorted easiest-first so the hard ones cluster at the
+        end where a user can stop. Every candidate carries a plain-language
+        reason generated from the scoring signals ("title matches exactly,
+        year differs by 3") — the practical payoff of a transparent scorer
+        over an opaque similarity number.
+      - **There is no "accept the rest" path, and one must not be added.**
+        `committableRows()` commits only rows that were decided, so leaving
+        review early imports LESS, never a guess.
+      - **Letterboxd's `watchlist.csv` and `watched.csv` have byte-identical
+        headers.** Inside the export ZIP the filenames settle it; for a
+        renamed loose file `detectLetterboxdSource` returns null and the UI
+        ASKS, because the difference is "plan to watch" versus "have seen"
+        across a whole library.
+      - **A minimal ZIP reader** (`lib/import/zip.ts`) over the platform's
+        `DecompressionStream("deflate-raw")` — structure parsing only, no
+        compression reimplemented. Requiring someone to unzip first is exactly
+        the friction that stops people switching. Sizes come from the CENTRAL
+        directory (a streaming archiver writes zeroes locally) and the extra-
+        field length is re-read from the LOCAL header (they legitimately
+        differ); both are pinned by tests. `__MACOSX/` shadows are skipped.
+      - **Two bugs found only by live testing, both at boundaries no unit test
+        covered.** (1) `AmbiguousFile` carried a parsed `CsvTable`, whose
+        `CsvRecord`s expose `get`/`has` as METHODS — functions are not
+        structured-cloneable, so `postMessage` threw and the import died,
+        only ever for an ambiguous file. Every module was individually correct
+        and fully tested; the failure lived only *between* them. Now carries
+        raw text, and `parse-file.test.ts` asserts a `ParseResult` survives
+        `structuredClone`. (2) A JSX comment placed inside `&& ( ... )` parses
+        as an object literal, not a comment, and stopped the file compiling —
+        worth knowing because the error (`Expected '</', got 'ident'`) points
+        at the line AFTER the real problem.
+      - **Verified live end to end in mock mode**: IMDb ids matched exactly
+        and a `tvEpisode` row bucketed `unsupported` rather than dropped;
+        Letterboxd diary matched by title with both rewatch rows deduped to
+        one lookup but kept as two rows; the review queue's keyboard picks and
+        skips flowed back to the preview; commit filed six events on their own
+        real 2024 dates rather than today; re-importing the identical file was
+        refused; a renamed watchlist/watched CSV asked which it was. The
+        commit assertions were checked against storage TIMESTAMPS to separate
+        the import's writes from pre-existing data — which is what showed The
+        Godfather being promoted `watchlist -> watched` while KEEPING its
+        local score over the imported one.
+      - 161 import tests; 641 across the suite.
+      - **Not yet done**: no `docs/` note on Trakt's format, and the importer
+        has been exercised only against mock mode — a run against real TMDB
+        data (where titles are messier and the ambiguity rate is the open
+        question §2.4 flags) is still owed.
+- [ ] **Step 2** — Trakt and TV Time importers, after verifying their formats
+      the same way. Trakt has no single canonical CSV: community tools emit a
+      configurable id column (`imdb`/`tmdb`/`tvdb`/`trakt`), so it needs a
+      column-mapping step.
+- [ ] **Step 3** — New-episode notifications.
 
 ---
 

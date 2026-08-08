@@ -189,7 +189,16 @@ export function LibraryView() {
 
   return (
     <div className="space-y-10 p-6 sm:p-8">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        {/* Phase 7 Step 1 — Import lives on Library rather than Profile, even
+            though it is arguably a data-management action and Profile is where
+            the account card and diagnostics panel sit. Discovery beats
+            taxonomy here: the moment someone most needs an importer is the
+            moment they are looking at a library that does not yet have their
+            history in it, and that moment happens on THIS page. */}
+        <Button href="/import" variant="ghost" size="sm">
+          Import
+        </Button>
         {/* Phase 6 Step 6b — shared lists live at their own route rather than
             as a third tracking-status section here: a list isn't a tracking
             state, it's a named, shareable collection that can hold titles
