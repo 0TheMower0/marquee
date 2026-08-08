@@ -499,3 +499,94 @@ Decisions already made and not up for negotiation unless challenged: no
 threshold-based auto-accept (§2.3), no popularity tiebreak on exact title+year
 (§2.3), no "best guess the rest" button (§3.4), no IMDb rating-date-as-watch-date
 by default (§5), no Letterboxd scraping (§0.1).
+
+*(All four were answered before Step 1: Trakt over Moviebase, build the ZIP
+reader, skip-and-remember out, hand-roll the CSV parser.)*
+
+---
+
+## 11. Trakt — format verified, and it changes the shape of the step
+
+Verified for Step 2 the same way IMDb and Letterboxd were. The headline: **"a
+Trakt CSV" is two unrelated formats**, and the richer one is better than
+anything supported so far while the poorer one is worse.
+
+### 11.1 The official VIP export — rich, and carries TMDB ids directly
+
+Trakt's own export (a paid VIP feature) produces wide, metadata-heavy rows.
+Two real header lines, observed rather than reconstructed:
+
+```
+collected_at,type,title,year,trakt_rating,trakt_id,imdb_id,tmdb_id,url,
+released,runtime,genres,media_type,resolution,3d,hdr,audio,audio_channels
+
+rated_at,type,title,year,trakt_rating,trakt_id,imdb_id,tmdb_id,tvdb_id,url,
+released,season_number,episode_number,episode_title,episode_released,
+episode_trakt_rating,episode_trakt_id,episode_imdb_id,episode_tmdb_id,
+episode_tvdb_id,genres,rating
+```
+
+Four things follow:
+
+- **`tmdb_id` is present, which unlocks a tier above anything we have.**
+  IMDb needed a `/find` round trip; Letterboxd needed a search. A TMDB id
+  needs neither — it IS our id. Matching a Trakt export is close to free
+  upstream, and the review queue barely engages.
+- **⚠️ `rating` and `trakt_rating` are different columns and picking the wrong
+  one is a silent catastrophe.** `trakt_rating` is the COMMUNITY average;
+  `rating` is the user's own score. Reading `trakt_rating` would overwrite a
+  user's entire rating history with crowd averages — plausible-looking numbers
+  in every row, wrong in every row, and invisible. This is the single most
+  dangerous field in any supported format.
+- **The leading timestamp column names the export type**: `collected_at`,
+  `rated_at`, `watched_at`, `listed_at`. That is the detection discriminator,
+  and unlike Letterboxd's watchlist/watched collision it is unambiguous.
+- **`type` distinguishes movie / show / episode**, and episode rows carry
+  `season_number` / `episode_number`.
+
+### 11.2 The community-tool export — minimal, and the id column NAMES its type
+
+`xbgmsharp/trakt` and similar write a narrow row whose id column is
+configurable, so the header itself varies:
+
+```
+imdb,trakt,watched_at,title
+tmdb,trakt,watched_at,title
+tmdb,trakt,watched_at,season,episode,episode_title,show_title
+```
+
+- **No `year` column at all.** That collides with §2.3 by design: a row with
+  no year can never reach `confident` through title matching. So a
+  community-tool export is only importable via its id column — and if that
+  column is `trakt` or `tvdb`, which we cannot resolve, every row goes to
+  review with a title and nothing else. Worth telling the user up front rather
+  than letting them discover it after a long resolve.
+- The id column's NAME is its type, which makes detection easy and mapping
+  explicit.
+
+### 11.3 The scope fork this exposes
+
+**Trakt is primarily a TV tracker, and Step 1 deliberately does not import
+episodes.** For IMDb and Letterboxd that was a narrow gap — IMDb episode
+ratings are a minority of a ratings export, and Letterboxd is films only. For
+Trakt it is most of the data: a Trakt watched history is largely episode rows,
+and an importer that drops them would discard the bulk of what a Trakt user
+came to move.
+
+So Trakt and episode-level import are coupled in a way the first two sources
+were not, and there are three honest orderings:
+
+| | what ships | cost |
+|---|---|---|
+| **A** | Trakt, title-level only; episode rows counted and shown as `unsupported` | small, and close to useless for the audience that actually uses Trakt |
+| **B** | Episode-level import first as its own step, then Trakt on top | correct ordering; two steps before any Trakt user is served |
+| **C** | Trakt with episode support together | largest single step, and the commit surface roughly doubles (`EpisodeRange` writes, per-episode watch events, `recordEpisodeChanges` on the sync seam) |
+
+**Recommendation: B.** Episode import is worth having independently — it also
+unblocks the IMDb `tvEpisode` rows already being counted as `unsupported`, and
+it is the piece with real design content (range merging against existing
+progress, per-episode events, the sync diff). Bolting it onto a Trakt parser
+would bury that work inside a source-specific step, which is exactly the
+coupling `ImportRow` exists to prevent.
+
+None of A/B/C is started. This section is verification, not a plan.
