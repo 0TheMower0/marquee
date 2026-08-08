@@ -72,6 +72,17 @@ export interface ImportRow {
    *  rejected (design doc §0.1). */
   slug: string | null;
   mediaTypeHint: MediaTypeHint;
+  /**
+   * Episode coordinates, when a row identifies ONE episode rather than a whole
+   * title. Both present or both null — a season without an episode cannot be
+   * marked, and `isWatchEvent` rejects an episode event missing either.
+   *
+   * Only Trakt supplies these today. IMDb `tvEpisode` rows name an episode but
+   * give no coordinates (its `Const` is the episode's own IMDb id), so they
+   * stay `unsupported` until resolved through TMDB's `tv_episode_results`.
+   */
+  season: number | null;
+  episode: number | null;
   /** Normalized to OUR 0–100 scale at parse time, so no downstream code has to
    *  know a source's native scale. See `normalizeImdbRating` /
    *  `normalizeLetterboxdRating`. */
@@ -88,6 +99,19 @@ export interface ImportRow {
    * conversion.
    */
   watchedOn: string | null;
+  /**
+   * Local minutes since midnight, when the SOURCE recorded a time.
+   *
+   * Null for every source that writes a bare calendar date (IMDb, Letterboxd)
+   * — `lib/watchlog/types.ts` anticipated exactly this, describing `m` as
+   * "omitted when genuinely unknown, which is what a Phase 7 CSV import would
+   * produce". Trakt writes an instant, so its rows can carry a real one.
+   *
+   * The conversion from instant to (day, minute) happens in the PARSER, via
+   * `instantToLocalMoment`, because only the parser knows whether its source
+   * gave a date or a timestamp — and the two need opposite handling.
+   */
+  watchedMinute: number | null;
   isRewatch: boolean;
   intent: ImportIntent;
   /** 1-based line in the original file, counting the header row. Shown in the
@@ -152,6 +176,30 @@ export function isImportRow(value: unknown): value is ImportRow {
     return false;
   }
   if (!Number.isInteger(row.sourceLine)) return false;
+
+  // Both or neither. A half-specified episode would pass validation here and
+  // then be silently dropped by the merge, which is a worse failure than a
+  // rejected row.
+  if (
+    row.watchedMinute !== null &&
+    row.watchedMinute !== undefined &&
+    !(
+      typeof row.watchedMinute === "number" &&
+      Number.isInteger(row.watchedMinute) &&
+      row.watchedMinute >= 0 &&
+      row.watchedMinute <= 1439
+    )
+  ) {
+    return false;
+  }
+
+  const hasSeason = row.season !== null && row.season !== undefined;
+  const hasEpisode = row.episode !== null && row.episode !== undefined;
+  if (hasSeason !== hasEpisode) return false;
+  if (hasSeason) {
+    if (!Number.isInteger(row.season) || (row.season as number) < 0) return false;
+    if (!Number.isInteger(row.episode) || (row.episode as number) < 1) return false;
+  }
 
   // Bounded so a hostile caller cannot make us build a megabyte-long upstream
   // query string out of one field.

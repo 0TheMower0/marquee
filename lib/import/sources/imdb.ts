@@ -103,6 +103,15 @@ function baseRow(
     mediaTypeHint: mediaTypeHint(record.get("Title Type")),
     ratedOn: toDayKey(record.get("Date Rated")),
     isRewatch: false,
+    // IMDb names an episode but gives no coordinates — its `Const` for a
+    // tvEpisode row is the EPISODE's own IMDb id, not a show id plus numbers.
+    // Resolving those needs TMDB's `tv_episode_results`, which is why such
+    // rows stay `unsupported` rather than arriving here half-specified.
+    season: null,
+    episode: null,
+    // No source-recorded watch time; `Date Rated` is a date, and not a watch
+    // date at that.
+    watchedMinute: null,
     sourceLine: record.line,
   };
 }

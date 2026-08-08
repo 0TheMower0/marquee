@@ -67,6 +67,9 @@ function row(overrides: Partial<ImportRow> = {}): ImportRow {
     score: null,
     ratedOn: null,
     watchedOn: null,
+    season: null,
+    episode: null,
+    watchedMinute: null,
     isRewatch: false,
     intent: "watched",
     sourceLine: 2,
@@ -321,6 +324,141 @@ describe("watch events", () => {
       {},
     );
     expect((await watchLogStore.get("2019-03-14"))?.[0].k).toBe("t");
+  });
+});
+
+describe("episode rows", () => {
+  const show = title("1396", "Breaking Bad", "tv");
+
+  async function seedShow(status: TrackingStatus, watchedEpisodes = {}) {
+    await trackingStore.set("tv:1396", {
+      id: "1396",
+      mediaType: "tv",
+      status,
+      addedAt: new Date("2020-01-01"),
+      updatedAt: new Date("2020-01-01"),
+      summary: show,
+      watchedEpisodes,
+      knownEpisodeCount: 62,
+    });
+  }
+
+  it("merges an imported episode into progress", async () => {
+    const written = await commitRow(resolved({ season: 1, episode: 3 }, show), null, {});
+    expect(written.episodes).toBe(true);
+
+    const entry = await trackingStore.get("tv:1396");
+    expect(entry?.mediaType === "tv" && entry.watchedEpisodes).toEqual({ 1: [[3, 3]] });
+  });
+
+  it("unions with existing progress rather than replacing it", async () => {
+    await seedShow("watching", { 1: [[1, 2]] });
+    await commitRow(resolved({ season: 1, episode: 3 }, show), null, {});
+
+    const entry = await trackingStore.get("tv:1396");
+    // Adjacent, so the canonical invariant collapses it to one range.
+    expect(entry?.mediaType === "tv" && entry.watchedEpisodes).toEqual({ 1: [[1, 3]] });
+  });
+
+  it("promotes to watching, NEVER to watched", async () => {
+    // One episode is not the whole show, and without season counts nothing
+    // can honestly say otherwise.
+    await commitRow(resolved({ season: 1, episode: 3 }, show), null, {});
+    expect((await trackingStore.get("tv:1396"))?.status).toBe("watching");
+  });
+
+  it("logs an episode event carrying its coordinates", async () => {
+    await commitRow(
+      resolved({ season: 2, episode: 7, watchedOn: "2019-03-14" }, show),
+      "evt-1",
+      {},
+    );
+    const [event] = (await watchLogStore.get("2019-03-14")) ?? [];
+    expect(event.k).toBe("e");
+    expect(event.s).toBe(2);
+    expect(event.e).toBe(7);
+  });
+
+  it("carries a real minute-of-day when the source recorded a time", async () => {
+    await commitRow(
+      resolved({ season: 1, episode: 1, watchedOn: "2019-03-14", watchedMinute: 1215 }, show),
+      "evt-1",
+      {},
+    );
+    expect(((await watchLogStore.get("2019-03-14")) ?? [])[0].m).toBe(1215);
+  });
+
+  it("omits the minute when the source gave only a date", async () => {
+    await commitRow(
+      resolved({ season: 1, episode: 1, watchedOn: "2019-03-14" }, show),
+      "evt-1",
+      {},
+    );
+    expect(((await watchLogStore.get("2019-03-14")) ?? [])[0].m).toBeUndefined();
+  });
+
+  it("writes progress even with no date at all", async () => {
+    // Progress is a fact the source asserts; a date is not something we may
+    // invent. So the range lands and the log stays empty.
+    const written = await commitRow(resolved({ season: 1, episode: 5 }, show), null, {});
+    expect(written.episodes).toBe(true);
+    expect(written.event).toBe(false);
+  });
+
+  describe("the coarse-watched exception", () => {
+    it("does NOT merge episodes into a title-level watched show", async () => {
+      // The user asserted the WHOLE show. Merging 1 episode into a 62-episode
+      // show would silently discard 61 they had already claimed.
+      await seedShow("watched", {});
+      const written = await commitRow(resolved({ season: 1, episode: 3 }, show), null, {});
+
+      expect(written.episodes).toBe(false);
+      const entry = await trackingStore.get("tv:1396");
+      expect(entry?.mediaType === "tv" && entry.watchedEpisodes).toEqual({});
+      expect(entry?.status).toBe("watched");
+    });
+
+    it("STILL writes the watch date for such a show", async () => {
+      // The log is append-only and cannot demote anything, so the part an
+      // import uniquely supplies still lands.
+      await seedShow("watched", {});
+      const written = await commitRow(
+        resolved({ season: 1, episode: 3, watchedOn: "2019-03-14" }, show),
+        "evt-1",
+        {},
+      );
+
+      expect(written.episodes).toBe(false);
+      expect(written.event).toBe(true);
+      expect((await watchLogStore.get("2019-03-14")) ?? []).toHaveLength(1);
+    });
+
+    it("DOES merge into a show that already has explicit ranges", async () => {
+      // `watched` with real ranges is not a coarse claim, so union is safe.
+      await seedShow("watched", { 1: [[1, 2]] });
+      const written = await commitRow(resolved({ season: 1, episode: 9 }, show), null, {});
+
+      expect(written.episodes).toBe(true);
+      const entry = await trackingStore.get("tv:1396");
+      expect(entry?.mediaType === "tv" && entry.watchedEpisodes).toEqual({
+        1: [
+          [1, 2],
+          [9, 9],
+        ],
+      });
+    });
+  });
+
+  it("ignores episode coordinates on a MOVIE match", async () => {
+    // A row claiming S1E3 that resolved to a film is incoherent; the
+    // coordinates are dropped rather than written somewhere meaningless.
+    const written = await commitRow(
+      resolved({ season: 1, episode: 3 }, title("49047")),
+      null,
+      {},
+    );
+    expect(written.episodes).toBe(false);
+    expect((await trackingStore.get("movie:49047"))?.status).toBe("watched");
   });
 });
 

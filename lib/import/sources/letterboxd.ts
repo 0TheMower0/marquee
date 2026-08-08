@@ -114,6 +114,11 @@ function baseRow(
     // Letterboxd is films only.
     mediaTypeHint: "movie",
     ratedOn: null,
+    // Films only, so never an episode.
+    season: null,
+    episode: null,
+    // `Watched Date` is a bare calendar date — Letterboxd records no time.
+    watchedMinute: null,
     sourceLine: record.line,
   };
 }

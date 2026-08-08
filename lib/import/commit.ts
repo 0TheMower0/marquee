@@ -3,15 +3,27 @@ import { ratingsStore } from "@/lib/ratings/store";
 import type { RatingEntry } from "@/lib/ratings/types";
 import { announceLocalChange } from "@/lib/sync/engine";
 import {
+  recordEpisodeChanges,
   recordRatingWrite,
   recordTitleWrite,
   recordWatchEvents,
 } from "@/lib/sync/record";
 import { trackingStore } from "@/lib/tracking/store";
-import { entryKey, type TrackingEntry, type TrackingStatus } from "@/lib/tracking/types";
+import {
+  entryKey,
+  type TrackingEntry,
+  type TrackingStatus,
+  type WatchedEpisodes,
+} from "@/lib/tracking/types";
 import { watchLogStore } from "@/lib/watchlog/store";
 import { WATCH_KIND, type DayKey, type WatchEvent } from "@/lib/watchlog/types";
 
+import {
+  countEpisodes,
+  mergeImportedEpisodes,
+  shouldMergeRanges,
+  type ImportedEpisode,
+} from "./episodes";
 import type { ImportRow, ResolvedRow } from "./types";
 
 /**
@@ -115,11 +127,32 @@ export function committableRows(resolved: readonly ResolvedRow[]): ResolvedRow[]
   return resolved.filter((r) => !r.skipped && r.chosen !== null);
 }
 
+/** What `commitRow` actually wrote. Every key here must be declared in
+ *  `commit-sync.test.ts`'s `SYNC_TABLES_BY_WRITE_KIND` — a test asserts that
+ *  completeness, so adding a field here fails until its outbox table is
+ *  written down. */
+export interface CommitWrites {
+  title: boolean;
+  event: boolean;
+  rating: boolean;
+  episodes: boolean;
+}
+
+/** The episode a row identifies, if any. Both coordinates or neither, and
+ *  only meaningful for a TV title. */
+function episodeCoordinates(resolved: ResolvedRow): ImportedEpisode | null {
+  const { row, chosen } = resolved;
+  if (!chosen || chosen.mediaType !== "tv") return null;
+  if (row.season === null || row.episode === null) return null;
+  return { season: row.season, episode: row.episode };
+}
+
 function toTrackingEntry(
   existing: TrackingEntry | null,
   summary: TitleSummary,
   status: TrackingStatus,
   now: Date,
+  watchedEpisodes?: WatchedEpisodes,
 ): TrackingEntry {
   const base = {
     id: summary.id,
@@ -144,20 +177,30 @@ function toTrackingEntry(
   return {
     ...base,
     mediaType: "tv",
-    // Episode progress is never touched by an import: this step imports
-    // title-level status only, and overwriting a user's real episode ranges
-    // with an empty object would destroy exactly the data that is hardest to
-    // reconstruct.
-    watchedEpisodes: existing && existing.mediaType === "tv" ? existing.watchedEpisodes : {},
+    // Defaults to whatever was already there. A caller that did not compute a
+    // merge must never blank this — overwriting real episode ranges with an
+    // empty object destroys the data hardest for a user to reconstruct.
+    watchedEpisodes:
+      watchedEpisodes ??
+      (existing && existing.mediaType === "tv" ? existing.watchedEpisodes : {}),
     knownEpisodeCount:
       existing && existing.mediaType === "tv" ? existing.knownEpisodeCount : null,
   };
 }
 
-/** The watch date a row contributes, if any. */
-function watchDateFor(row: ImportRow, options: CommitOptions): DayKey | null {
-  if (row.watchedOn) return row.watchedOn;
-  if (options.useRatingDateAsWatchDate && row.ratedOn) return row.ratedOn;
+/** The watch moment a row contributes, if any. `minute` rides along with the
+ *  day so the two always describe the same instant — a source that gave only
+ *  a date yields a null minute rather than a fabricated midnight. */
+function watchMomentFor(
+  row: ImportRow,
+  options: CommitOptions,
+): { day: DayKey; minute: number | null } | null {
+  if (row.watchedOn) return { day: row.watchedOn, minute: row.watchedMinute };
+  // The opt-in rating-date fallback carries no time by definition — IMDb
+  // records neither a watch date nor a watch time.
+  if (options.useRatingDateAsWatchDate && row.ratedOn) {
+    return { day: row.ratedOn, minute: null };
+  }
   return null;
 }
 
@@ -175,15 +218,35 @@ function watchDateFor(row: ImportRow, options: CommitOptions): DayKey | null {
  * Flagging a decade of genuine viewing history as bulk would understate it
  * exactly where it matters most.
  */
-function toWatchEvent(summary: TitleSummary, id: string | null): WatchEvent {
-  const event: WatchEvent = {
-    k: summary.mediaType === "movie" ? WATCH_KIND.MOVIE : WATCH_KIND.TITLE,
-    t: `${summary.mediaType}:${summary.id}`,
-  };
+function toWatchEvent(
+  summary: TitleSummary,
+  id: string | null,
+  episode: ImportedEpisode | null,
+  minute: number | null,
+): WatchEvent {
+  const event: WatchEvent = episode
+    ? {
+        k: WATCH_KIND.EPISODE,
+        t: `${summary.mediaType}:${summary.id}`,
+        s: episode.season,
+        e: episode.episode,
+      }
+    : {
+        k: summary.mediaType === "movie" ? WATCH_KIND.MOVIE : WATCH_KIND.TITLE,
+        t: `${summary.mediaType}:${summary.id}`,
+      };
+
   // Omitted entirely rather than set to null when signed out — `isWatchEvent`
   // rejects a present-but-empty id, and an absent one is the established
   // pre-account shape the first-login merge already knows how to assign.
   if (id) event.id = id;
+
+  // Present only when the SOURCE recorded a time. Letterboxd and IMDb give a
+  // bare calendar date, so their events stay `m`-less exactly as
+  // `lib/watchlog/types.ts` anticipated; Trakt gives an instant, so its
+  // events carry a real local minute rather than a fabricated one.
+  if (minute !== null) event.m = minute;
+
   return event;
 }
 
@@ -197,30 +260,68 @@ export async function commitRow(
   eventId: string | null,
   options: CommitOptions,
   now: Date = new Date(),
-): Promise<{ title: boolean; event: boolean; rating: boolean }> {
+): Promise<CommitWrites> {
   const summary = resolved.chosen;
-  if (!summary || resolved.skipped) return { title: false, event: false, rating: false };
+  if (!summary || resolved.skipped) {
+    return { title: false, event: false, rating: false, episodes: false };
+  }
 
   const { row } = resolved;
   const key = entryKey(summary.mediaType, summary.id);
+  const episode = episodeCoordinates(resolved);
 
-  /* --- status ---------------------------------------------------------- */
+  /* --- status and episode progress, in ONE write ------------------------ */
   const existing = await trackingStore.get(key);
-  const wanted = intendedStatus(row);
+
+  // An episode row asserts one episode, never the whole show — so it may
+  // promote a title to "watching" but must never reach "watched". Whether 62
+  // imported episodes actually complete a show is a question only season
+  // counts can answer, and `deriveStatus` correctly declines to guess without
+  // them. Leaving it at "watching" is the honest floor; the user can mark it
+  // watched, and a per-episode edit later reconciles properly.
+  const wanted: TrackingStatus = episode ? "watching" : intendedStatus(row);
   // Max progress. This single comparison is what guarantees an import can
   // never demote something the user already watched.
   const status =
     existing && STATUS_RANK[existing.status] >= STATUS_RANK[wanted] ? existing.status : wanted;
 
+  const beforeEpisodes: WatchedEpisodes =
+    existing && existing.mediaType === "tv" ? existing.watchedEpisodes : {};
+
+  // The coarse-watched exception (see `episodes.ts`): a title-level "watched"
+  // asserts the WHOLE show, so merging specific episodes into it would
+  // silently discard every episode the import did not mention. Skipped here,
+  // while the watch EVENTS below still land — the log cannot demote anything.
+  const mayMerge =
+    episode !== null &&
+    summary.mediaType === "tv" &&
+    shouldMergeRanges(existing?.status ?? "watchlist", beforeEpisodes);
+
+  const afterEpisodes = mayMerge
+    ? mergeImportedEpisodes(beforeEpisodes, [episode])
+    : beforeEpisodes;
+
+  const episodesChanged = countEpisodes(afterEpisodes) > countEpisodes(beforeEpisodes);
+  const statusChanged = !existing || status !== existing.status;
+
   let titleWritten = false;
-  if (!existing || status !== existing.status) {
-    const entry = toTrackingEntry(existing, summary, status, now);
+  let episodesWritten = false;
+  if (statusChanged || episodesChanged) {
+    const entry = toTrackingEntry(existing, summary, status, now, afterEpisodes);
     await trackingStore.set(key, entry);
     // Queued AFTER the local write succeeds — `lib/sync/record.ts`'s standing
     // rule: never upload what did not persist, or the next pull reinstalls a
     // change the user never actually made. No-ops when signed out.
     await recordTitleWrite(entry);
-    titleWritten = true;
+    titleWritten = statusChanged;
+
+    if (episodesChanged) {
+      // Diffed rather than re-uploaded whole: one imported episode is one row,
+      // not the show's entire history. The `removed` half of that diff is
+      // always empty here, because the merge is a union.
+      await recordEpisodeChanges(summary.mediaType, summary.id, beforeEpisodes, afterEpisodes, now);
+      episodesWritten = true;
+    }
   }
 
   /* --- rating ---------------------------------------------------------- */
@@ -247,8 +348,9 @@ export async function commitRow(
 
   /* --- watch event ----------------------------------------------------- */
   let eventWritten = false;
-  const day = watchDateFor(row, options);
-  if (day) {
+  const moment = watchMomentFor(row, options);
+  if (moment) {
+    const { day } = moment;
     const existingDay = (await watchLogStore.get(day)) ?? [];
 
     // Signed in, the deterministic id makes re-running the same file a no-op
@@ -262,7 +364,7 @@ export async function commitRow(
     const alreadyPresent = eventId !== null && existingDay.some((e) => e.id === eventId);
 
     if (!alreadyPresent) {
-      const event = toWatchEvent(summary, eventId);
+      const event = toWatchEvent(summary, eventId, episode, moment.minute);
       await watchLogStore.set(day, [...existingDay, event]);
       // `dayKey` passed through verbatim, never re-derived — the row must
       // carry the date the film was actually watched, not today.
@@ -273,7 +375,12 @@ export async function commitRow(
     }
   }
 
-  return { title: titleWritten, event: eventWritten, rating: ratingWritten };
+  return {
+    title: titleWritten,
+    event: eventWritten,
+    rating: ratingWritten,
+    episodes: episodesWritten,
+  };
 }
 
 /** Called once after a commit finishes, so other tabs re-read storage. The

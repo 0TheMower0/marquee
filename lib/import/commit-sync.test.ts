@@ -78,6 +78,9 @@ function resolved(overrides: Partial<ImportRow> = {}, chosen = title("49047")): 
       score: null,
       ratedOn: null,
       watchedOn: null,
+      season: null,
+      episode: null,
+      watchedMinute: null,
       isRewatch: false,
       intent: "watched",
       sourceLine: 2,
@@ -193,6 +196,9 @@ const SYNC_TABLES_BY_WRITE_KIND = {
   title: ["tracked_titles"],
   event: ["watch_events"],
   rating: ["ratings", "rating_notes"],
+  // Added because the guard below refused to let `episodes` arrive
+  // undeclared — which is the entire point of writing that guard first.
+  episodes: ["watched_episodes"],
 } as const satisfies Record<string, readonly string[]>;
 
 describe("the general guard", () => {
@@ -236,14 +242,19 @@ describe("the general guard", () => {
    * caught the original bug when it was re-introduced as a negative control.
    */
   it("every write kind commitRow reports leaves its outbox row", async () => {
+    // A TV EPISODE row, because it is the only shape that fires all four
+    // paths at once: status, episode ranges, a watch event and a rating. A
+    // movie row leaves `episodes` false, and a kind that never fires cannot
+    // be checked for the row it should have queued.
     const written = await commitRow(
-      resolved({ score: 80, watchedOn: "2019-03-14" }),
+      resolved(
+        { score: 80, watchedOn: "2019-03-14", season: 1, episode: 3 },
+        title("1396", "tv"),
+      ),
       "evt-1",
       {},
     );
 
-    // This fixture is built to fire every path at once, so a kind silently
-    // never firing cannot hide behind it.
     expect(Object.values(written).every(Boolean)).toBe(true);
 
     const queued = await tables();
