@@ -116,4 +116,29 @@ export const RATE_LIMITS = {
    * in a row is ordinary use, not abuse.
    */
   listFollowers: { name: "list-followers", limit: 60, windowSeconds: 60 },
+
+  /**
+   * Phase 7 Step 1: the CSV importer's batched match endpoint.
+   *
+   * ============================================================================
+   * WHY THIS RULE HAD TO EXIST AT ALL
+   * ============================================================================
+   * A 3,000-row import resolved one row per request would hit `search`'s
+   * 30/min after row 30 — the importer would 429 against our OWN limiter
+   * before TMDB ever noticed it. The fix is not a looser limit, it is a
+   * different request shape: `/api/import/resolve` takes a BATCH of rows
+   * (capped at `IMPORT_BATCH_LIMIT`), so 3,000 rows becomes ~120 requests
+   * rather than 3,000.
+   *
+   * 30/min against a 25-row batch is ~750 rows a minute, so a very large
+   * import takes a few minutes of wall-clock time and stays inside the limit
+   * throughout. That pacing is deliberate rather than reluctant: the work is
+   * resumable, the user watches a progress bar either way, and an importer
+   * that finishes in twenty seconds by saturating TMDB is not a better
+   * outcome for anyone.
+   *
+   * The endpoint's real upstream cost is bounded twice over — by this rule,
+   * and by the server-side concurrency cap inside `resolveRows`.
+   */
+  importResolve: { name: "import-resolve", limit: 30, windowSeconds: 60 },
 } as const satisfies Record<string, RateLimitRule>;

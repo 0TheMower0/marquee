@@ -16,6 +16,7 @@ import {
   toTitle,
   toTitleSummaries,
   toWatchProviders,
+  type TmdbFindResponse,
   type TmdbPagedResponse,
   type TmdbSeasonDetail,
   type TmdbTitleDetail,
@@ -34,6 +35,15 @@ const REVALIDATE = {
   detail: 86_400, // 24 hours
   related: 86_400, // 24 hours
   watchProviders: 43_200, // 12 hours — availability shifts, but not hourly
+  /**
+   * An IMDb id -> TMDB id mapping is effectively immutable: the pairing is a
+   * fact about two catalogues, not a value that drifts the way a rating or a
+   * streaming availability does. So this gets `detail`'s long lifetime rather
+   * than `search`'s short one, which matters directly — a Phase 7 import of a
+   * few thousand rows is thousands of `/find` calls, and a 5-minute window
+   * would expire most of them before a retried or resumed import reused them.
+   */
+  findByExternalId: 86_400, // 24 hours
 } as const;
 
 const DEFAULT_REGION = "US";
@@ -164,6 +174,39 @@ export const tmdbProvider: ContentProvider = {
       { revalidateSeconds: REVALIDATE.detail },
     );
     return toEpisodes(raw.episodes, showId, seasonNumber);
+  },
+
+  /**
+   * `/find/{imdb_id}?external_source=imdb_id`.
+   *
+   * The response carries FIVE separate arrays — `movie_results`,
+   * `tv_results`, `tv_episode_results`, `tv_season_results`,
+   * `person_results` — and only the first two are read here.
+   *
+   * Concatenating movie and TV results rather than checking one and falling
+   * back to the other is what makes the interface's "more than one means
+   * ambiguous" contract real: an id that somehow resolves to both a film and
+   * a series comes back as two, and the importer sends it to a human instead
+   * of silently preferring whichever array this function happened to read
+   * first.
+   *
+   * Episode and season results are dropped on purpose (see the interface
+   * doc). They are genuinely resolvable and are deferred, not impossible —
+   * this is where Phase 7's episode-level import would hook in.
+   */
+  async findByExternalId(imdbId) {
+    const raw = await tmdbFetch<TmdbFindResponse>(
+      `/find/${encodeURIComponent(imdbId.trim())}`,
+      {
+        searchParams: { external_source: "imdb_id" },
+        revalidateSeconds: REVALIDATE.findByExternalId,
+      },
+    );
+
+    return [
+      ...toTitleSummaries(raw.movie_results ?? [], "movie"),
+      ...toTitleSummaries(raw.tv_results ?? [], "tv"),
+    ];
   },
 
   async getSimilar(id, mediaType) {

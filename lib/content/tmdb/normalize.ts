@@ -53,6 +53,23 @@ export interface TmdbPagedResponse {
   total_results?: number;
 }
 
+/**
+ * `/find/{external_id}` — deliberately NOT a paged response.
+ *
+ * It answers with several parallel arrays rather than one result list, which
+ * is exactly why `findByExternalId` can distinguish an unambiguous match from
+ * an ambiguous one. `tv_episode_results` and `tv_season_results` are typed
+ * here even though the provider currently ignores them, so it is visible that
+ * they exist and are being skipped on purpose rather than overlooked.
+ */
+export interface TmdbFindResponse {
+  movie_results?: TmdbListItem[];
+  tv_results?: TmdbListItem[];
+  tv_episode_results?: TmdbListItem[];
+  tv_season_results?: TmdbListItem[];
+  person_results?: TmdbListItem[];
+}
+
 interface TmdbCastEntry {
   id?: number;
   name?: string | null;

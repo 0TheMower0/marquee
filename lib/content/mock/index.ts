@@ -281,6 +281,36 @@ function jitter(id: string, salt: string, spread: number): number {
 }
 
 /**
+ * Real IMDb ids for part of the catalog, so Phase 7's CSV importer can be
+ * exercised end to end with no TMDB key — the zero-config guarantee applied
+ * to a feature whose whole first tier is external-id lookup.
+ *
+ * A mock-local map rather than a field on `Title`, deliberately: `CatalogEntry`
+ * is `Omit<Title, "placeholder">`, so putting `imdbId` there would push an
+ * external-id concept into the shared domain type and oblige `tmdbProvider` to
+ * expose one too. That is a real interface change in service of a fixture.
+ * Same shape and reasoning as `MOCK_RATING_OMISSIONS` above.
+ *
+ * **Deliberately partial.** The unmapped titles are what make the importer's
+ * Tier 2 (title+year) and `unmatched` paths reachable offline — a fixture
+ * where every lookup succeeds would only ever exercise the happy path.
+ */
+const MOCK_IMDB_IDS: Record<string, string> = {
+  tt0068646: "movie:the-godfather",
+  tt0073195: "movie:jaws",
+  tt0078748: "movie:alien",
+  tt0083658: "movie:blade-runner",
+  tt0110912: "movie:pulp-fiction",
+  tt0111161: "movie:the-shawshank-redemption",
+  tt6751668: "movie:parasite",
+  tt0903747: "tv:breaking-bad",
+  tt0306414: "tv:the-wire",
+  tt5687612: "tv:fleabag",
+  tt7366338: "tv:chernobyl",
+  tt4574334: "tv:stranger-things",
+};
+
+/**
  * Plausible fixed values derived from the catalog's own TMDB rating, rather
  * than hand-authored per title. Deriving keeps them COHERENT — a 9.3 film
  * can't end up with a 41% Rotten Tomatoes score, which is what makes a mock
@@ -397,6 +427,21 @@ export const mockProvider: ContentProvider = {
       );
     }
     return synthesizeEpisodes(entry, season);
+  },
+
+  async findByExternalId(imdbId) {
+    await simulateLatency();
+
+    // Returns [] rather than throwing for an id this catalog has never heard
+    // of, matching the interface contract: to this layer, "malformed" and
+    // "unknown" are the same answer, and the importer treats both as a row to
+    // fall through to title matching.
+    const target = MOCK_IMDB_IDS[imdbId.trim().toLowerCase()];
+    if (!target) return [];
+
+    const [mediaType, id] = target.split(":") as [MediaType, string];
+    const entry = findEntry(id, mediaType);
+    return entry ? [toSummary(hydrate(entry))] : [];
   },
 
   async getSimilar(id, mediaType) {

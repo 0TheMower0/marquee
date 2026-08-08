@@ -74,6 +74,35 @@ export interface ContentProvider {
   /** TV only. Rejects with `not_found` if the show or season doesn't exist. */
   getSeasonEpisodes(showId: string, seasonNumber: number): Promise<Episode[]>;
 
+  /**
+   * Resolves an EXTERNAL id (currently IMDb only, `tt0068646`) to whatever
+   * titles it maps to. Phase 7's CSV importer is the only caller.
+   *
+   * ============================================================================
+   * WHY THIS RETURNS AN ARRAY AND NOT A TITLE-OR-NULL
+   * ============================================================================
+   * TMDB's `/find` answers with five separate result arrays (movie, tv, tv
+   * episode, tv season, person), and an id can populate more than one. The
+   * tidier `Promise<TitleSummary | null>` signature would force the provider
+   * to pick one, which is a policy decision it has no business making — the
+   * importer's whole premise is that an ambiguous match goes to a human
+   * instead of being guessed at.
+   *
+   * So the counts are the contract:
+   *   []           unknown to the provider
+   *   [one]        unambiguous — the only case the importer auto-accepts
+   *   [two, ...]   ambiguous; the caller must NOT pick one
+   *
+   * Episode and person results are deliberately not represented. An IMDb
+   * episode id therefore yields `[]` rather than something an importer that
+   * cannot yet write episode-level progress would have to discard anyway.
+   *
+   * Rejects with `ContentError` like every other method; a malformed id is
+   * `not_found`, not a thrown validation error, because to this layer an
+   * unrecognized id and an unknown one are the same answer.
+   */
+  findByExternalId(imdbId: string): Promise<TitleSummary[]>;
+
   getSimilar(id: string, mediaType: MediaType): Promise<TitleSummary[]>;
 
   getRecommendations(id: string, mediaType: MediaType): Promise<TitleSummary[]>;

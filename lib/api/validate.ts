@@ -87,6 +87,22 @@ export function parseId(value: string): string {
   return value;
 }
 
+/**
+ * An IMDb id (`tt0068646`).
+ *
+ * Validated here rather than passed through as an opaque id, because this one
+ * goes into an upstream URL path against a specific external service. Rejecting
+ * a malformed value as a 400 keeps a junk value in a CSV from becoming a
+ * pointless TMDB round trip whose empty result would then be indistinguishable
+ * from a genuine "no such film".
+ */
+export function parseImdbId(value: string): string {
+  if (!/^tt\d{7,10}$/i.test(value)) {
+    throw new BadRequestError("imdbId must look like tt0000000");
+  }
+  return value.toLowerCase();
+}
+
 export function parseSeasonNumber(value: string): number {
   // Season 0 is valid — TMDB uses it for "Specials".
   if (!/^\d{1,4}$/.test(value)) {

@@ -179,6 +179,19 @@ export const httpProvider: ContentProvider = {
     );
   },
 
+  /**
+   * Single-id lookup. Phase 7's bulk importer does NOT use this — a
+   * thousand-row import goes through the batched `/api/import/resolve`
+   * endpoint instead, because a per-row round trip would trip the per-IP
+   * limiter within the first minute. This exists so the client seam
+   * implements the full `ContentProvider` contract (the type checker
+   * insisted, correctly) and for genuinely one-off lookups, such as a user
+   * pasting an IMDb id into the review queue's manual search.
+   */
+  async findByExternalId(imdbId: string) {
+    return apiFetch<TitleSummary[]>(`/find/${encodeURIComponent(imdbId)}`);
+  },
+
   async getSimilar(id: string, mediaType: MediaType) {
     return apiFetch<TitleSummary[]>(
       `/title/${mediaType}/${encodeURIComponent(id)}/similar`,
