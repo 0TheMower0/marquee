@@ -177,36 +177,81 @@ describe("no local write means no queued row", () => {
   });
 });
 
+/**
+ * The outbox table(s) each of `commitRow`'s write kinds MUST queue.
+ *
+ * Declared at module scope rather than inline, because the first guard below
+ * asserts COMPLETENESS against it — which is what makes this map the place a
+ * new write kind has to be registered, rather than a list that quietly falls
+ * behind the code it describes.
+ *
+ * A kind that genuinely must not sync belongs here as an empty array with a
+ * comment saying why. "Not listed" is never the right way to express that,
+ * because it is indistinguishable from having forgotten.
+ */
+const SYNC_TABLES_BY_WRITE_KIND = {
+  title: ["tracked_titles"],
+  event: ["watch_events"],
+  rating: ["ratings", "rating_notes"],
+} as const satisfies Record<string, readonly string[]>;
+
 describe("the general guard", () => {
   /**
-   * Not tied to any particular field. It asserts the INVARIANT — a local write
-   * always has a corresponding queued row — so a value added to `commitRow`
-   * later without a recorder fails here, which is exactly how the original bug
-   * would have been caught.
+   * ============================================================================
+   * THIS ONE INVERTS THE FAILURE MODE, AND THAT IS THE WHOLE POINT
+   * ============================================================================
+   * The bug this file exists for shipped because adding a local write that
+   * skipped the sync seam required NO action to go wrong — silence was the
+   * bug. Every other test here checks a write kind someone remembered to
+   * think about, which is exactly the population a forgotten one is not in.
+   *
+   * So this asserts completeness rather than correctness: any kind `commitRow`
+   * reports must be declared above. Adding a write kind therefore FAILS a test
+   * until its sync table is written down — or until "this one does not sync"
+   * is written down deliberately. The default outcome flips from silent-wrong
+   * to loud-unfinished.
+   *
+   * Deliberately does not depend on the kind being `true`: an always-false new
+   * kind would still have to be declared, because the question is what it
+   * queues WHEN it fires, not whether this fixture happens to fire it.
    */
-  it("every kind of local write commitRow reports leaves an outbox row", async () => {
+  it("every write kind commitRow reports is DECLARED in SYNC_TABLES_BY_WRITE_KIND", async () => {
+    const written = await commitRow(resolved(), null, {});
+
+    const undeclared = Object.keys(written).filter(
+      (kind) => !(kind in SYNC_TABLES_BY_WRITE_KIND),
+    );
+
+    expect(
+      undeclared,
+      `commitRow reports write kind(s) [${undeclared.join(", ")}] that this test does not know ` +
+        `about. Add each to SYNC_TABLES_BY_WRITE_KIND with the outbox table(s) it must queue — ` +
+        `or, if that write deliberately does not sync, declare it as [] and say why. Leaving it ` +
+        `undeclared is how an import stopped syncing once already.`,
+    ).toEqual([]);
+  });
+
+  /**
+   * The correctness half: a write that DID happen left its row. This is what
+   * caught the original bug when it was re-introduced as a negative control.
+   */
+  it("every write kind commitRow reports leaves its outbox row", async () => {
     const written = await commitRow(
       resolved({ score: 80, watchedOn: "2019-03-14" }),
       "evt-1",
       {},
     );
 
-    // The row exercises all three write paths at once.
-    expect(written).toEqual({ title: true, event: true, rating: true });
+    // This fixture is built to fire every path at once, so a kind silently
+    // never firing cannot hide behind it.
+    expect(Object.values(written).every(Boolean)).toBe(true);
 
     const queued = await tables();
-    const expected: Record<keyof typeof written, readonly string[]> = {
-      title: ["tracked_titles"],
-      event: ["watch_events"],
-      rating: ["ratings", "rating_notes"],
-    };
+    const declared: Record<string, readonly string[]> = SYNC_TABLES_BY_WRITE_KIND;
 
-    for (const [kind, didWrite] of Object.entries(written) as [
-      keyof typeof written,
-      boolean,
-    ][]) {
+    for (const [kind, didWrite] of Object.entries(written)) {
       if (!didWrite) continue;
-      for (const table of expected[kind]) {
+      for (const table of declared[kind] ?? []) {
         expect(queued, `commitRow reported a ${kind} write but queued no ${table} row`).toContain(
           table,
         );
