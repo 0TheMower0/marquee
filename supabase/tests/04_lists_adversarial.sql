@@ -92,8 +92,22 @@ begin
   end if;
 
   -- =======================================================================
-  -- 3. Alice invites bob. BEFORE accepting, bob has NO access — invited is
-  --    not membership.
+  -- 3. Alice invites bob. BEFORE accepting, bob can VIEW (the list itself,
+  --    its items, and his own invite row — he needs all three to decide
+  --    whether to accept) but has NO edit/collaborator access at all.
+  --
+  --    3a/3a2 were caught live, not written up front: the first version of
+  --    can_view_list() only counted an ACCEPTED collaborator, so a pending
+  --    invitee could see their OWN list_collaborators row (3c, below —
+  --    that policy was always correct) but the `lists!inner` embed in
+  --    getPendingInvites() silently dropped it, because the embedded LIST
+  --    itself failed can_view_list(). The practical symptom: an invite that
+  --    existed, that the invitee's own roster row proved they could see
+  --    part of, but that never appeared anywhere for them to accept. Fixed
+  --    in 20260810000002_lists_invite_visibility_fix.sql. These two checks
+  --    pin the fix; 3b/3b2 pin that the fix did NOT also hand out edit
+  --    access, which is a separate function (can_edit_list) this migration
+  --    never touched.
   -- =======================================================================
   insert into public.list_collaborators (list_id, user_id, invited_by)
     values (list_l, bob, alice);
@@ -104,8 +118,13 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', bob)::text, true);
 
   select count(*) into row_count from public.lists where id = list_l;
-  if row_count <> 0 then
-    failures := array_append(failures, '3a. bob (invited, not yet accepted) can already see the private list');
+  if row_count <> 1 then
+    failures := array_append(failures, '3a. bob (invited, not yet accepted) cannot see the list he was invited to');
+  end if;
+
+  select count(*) into row_count from public.list_items where list_id = list_l;
+  if row_count <> 1 then
+    failures := array_append(failures, '3a2. bob (invited, not yet accepted) cannot see the invited list''s items');
   end if;
 
   begin
@@ -113,11 +132,29 @@ begin
     values (list_l, 'movie', 'movie1', '{}'::jsonb, bob);
     failures := array_append(failures, '3b. bob (invited, not yet accepted) was able to add an item');
   exception when others then
-    raise notice 'PASS 3. an invited-but-not-accepted collaborator has no access at all';
+    raise notice 'PASS 3b. an invited-but-not-accepted collaborator cannot add items';
   end;
 
-  -- Bob CAN see his own pending invite row, though — he needs to, to respond
-  -- to it.
+  -- UPDATE, unlike INSERT, does NOT raise when RLS blocks it — `lists_update_own`'s
+  -- USING clause simply excludes bob's target row, so the statement "succeeds"
+  -- having touched 0 rows. No exception to catch here; the only honest signal
+  -- is re-reading the row afterward, same discipline check 14b in this file
+  -- already established for exactly this UPDATE-vs-SELECT-policy shape.
+  update public.lists set name = 'hijacked by invited bob' where id = list_l;
+
+  set local role postgres;
+  reset request.jwt.claims;
+  select count(*) into row_count from public.lists
+   where id = list_l and name = 'hijacked by invited bob';
+  if row_count <> 0 then
+    failures := array_append(failures, '3b2. the list was renamed by an invited-not-accepted bob');
+  else
+    raise notice 'PASS 3b2. an invited-but-not-accepted collaborator cannot edit the list';
+  end if;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', json_build_object('sub', bob)::text, true);
+
+  -- Bob CAN see his own pending invite row, too.
   select count(*) into row_count from public.list_collaborators
    where list_id = list_l and user_id = bob;
   if row_count <> 1 then

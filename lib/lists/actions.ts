@@ -1,5 +1,7 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
+
 import { headers } from "next/headers";
 
 import type { TitleSummary } from "@/lib/content/types";
@@ -97,6 +99,29 @@ const SUMMARY_COLUMNS = `
   list_items ( count )
 `;
 
+/**
+ * A SEPARATE statement from whatever write preceded it — never chain
+ * `.select()` onto an `.insert()`/`.update()` for `lists` and call this
+ * instead. Found live, not in review: Postgres applies the SELECT policy's
+ * USING clause to a RETURNING row, and `lists_select_visible` calls
+ * `can_view_list()`, which re-queries `public.lists` for the row BY ID. For
+ * a fresh INSERT, that re-query runs inside the same command that is still
+ * creating the row, and the row is not yet visible to it — so RETURNING
+ * fails RLS on a list you unquestionably own, with the exact same
+ * `42501`/"new row violates row-level security policy" wording an ordinary
+ * WITH CHECK failure produces. Confirmed directly against the live
+ * database: `can_view_list(id)` called as its own statement immediately
+ * after an equivalent insert returns `true`; the identical insert with
+ * `.select().single()` chained on fails. `can_view_comment_scope` (Step 6a)
+ * never hit this — it checks OTHER, already-committed tables
+ * (`watched_episodes`/`tracked_titles`), never the `comments` table it is
+ * itself gating. `list_items`/`list_collaborators` don't hit it either:
+ * their SELECT policies call `can_view_list`/`can_edit_list` against
+ * `lists`, a DIFFERENT table that already existed before this command. Only
+ * `lists` itself is self-referential this way, which is why only
+ * `createListAction` needed its id generated up front instead of taken from
+ * RETURNING — see the `randomUUID()` call there.
+ */
 async function reselectSummary(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   listId: string,
@@ -150,20 +175,22 @@ export async function createListAction(
     const supabase = await createSupabaseServerClient();
     const viewerId = await requireViewerId(supabase);
 
-    const { data: inserted, error } = await supabase
-      .from("lists")
-      .insert({
-        owner_id: viewerId,
-        name: checkedName.value,
-        description: checkedDescription.value,
-        visibility,
-      })
-      .select("id")
-      .single();
+    // The id is generated HERE, not left to the column default, specifically
+    // so this insert never needs `.select()`/RETURNING chained onto it — see
+    // the long comment above `reselectSummary` for why that combination is
+    // broken for this one table.
+    const id = randomUUID();
+    const { error } = await supabase.from("lists").insert({
+      id,
+      owner_id: viewerId,
+      name: checkedName.value,
+      description: checkedDescription.value,
+      visibility,
+    });
 
     if (error) throw mapListError(error);
 
-    return { ok: true, data: await reselectSummary(supabase, inserted.id, viewerId) };
+    return { ok: true, data: await reselectSummary(supabase, id, viewerId) };
   } catch (error) {
     return failure(error);
   }

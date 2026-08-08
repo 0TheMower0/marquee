@@ -3058,12 +3058,94 @@ range encoding is deliberately NOT preserved server-side).
         XP/streak/badge cards beneath it. No 5th item was added to the fixed
         4-item `NAV_ITEMS` global nav; that list stays the Phase 1 four.
       - Full static verification: typecheck, lint, all 480 vitest tests
-        (26 new), and `next build` all clean. **Not yet verified live** —
-        the migration has not been applied to the real Supabase project.
-        That needs to happen (same gate Step 6a crossed) before an actual
-        browser pass — create/edit/delete a list, change visibility, share a
-        link, invite + accept a collaborator (needs a second real account),
-        add/remove items, run the agreement view, follow a list — can run.
+        (26 new), and `next build` all clean.
+      - **Live-verified end to end against the real Supabase project, with a
+        second real account** (the invite/accept/agreement cluster cannot be
+        exercised any other way): create, add an item, cycle all three
+        visibility settings, confirm Discover tracks only `public`, confirm a
+        private list 404s for a signed-in non-member (not a "this is
+        private" message — see `getListDetail`'s own reasoning above),
+        invite, accept, and the agreement view correctly surfacing a title
+        both accounts had watchlisted. Two real bugs surfaced, neither of
+        which any adversarial SQL check or static tool caught — both are now
+        pinned as tests.
+      - **Bug 1 — `RETURNING` on `lists` INSERT fails RLS against your own
+        brand-new row, live, in pure SQL, with no app involved.** Creating a
+        list failed 100% of the time with `42501: new row violates row-level
+        security policy for table "lists"` — reading exactly like an
+        ordinary WITH CHECK rejection, even though `owner_id` was set
+        correctly and `auth.uid()` resolved correctly (both confirmed by
+        direct SQL, not assumed). The actual cause, found by systematically
+        isolating each layer against the live database rather than
+        re-deriving it from the SQL text: **Postgres applies a SELECT
+        policy's `USING` clause to `RETURNING` output**, and `can_view_list()`
+        — the function `lists_select_visible` calls — re-queries `public.lists`
+        *by id* to decide visibility. For a row still being created by the
+        SAME command, that internal re-query cannot see it yet, so the
+        RETURNING-triggered visibility check fails even though the row is
+        unquestionably the caller's own. Confirmed by elimination: the exact
+        same INSERT with `RETURNING` dropped succeeded; `can_view_list()`
+        called as its own separate statement on the same row immediately
+        afterward returned `true`. **This is why `createListAction` generates
+        its `id` with `randomUUID()` up front** rather than reading it back
+        from `RETURNING` — seeded doc comment on `reselectSummary` explains
+        it in full. It's a narrow, structural gap: `list_items`/
+        `list_collaborators` never hit it, because their SELECT policies
+        (`can_view_list`/`can_edit_list`) query the ALREADY-existing `lists`
+        table, never the table being written to. `can_view_comment_scope`
+        (Step 6a) never hit it either, for the identical reason. Only a
+        SELECT policy that is self-referential on the exact table being
+        inserted into, with RETURNING, is exposed — `updateListAction`/
+        `deleteListAction` keep their chained `.select()` because by
+        construction they only ever target a row that was already committed
+        in an earlier, separate request.
+      - **Bug 2 — a pending invite was invisible to the person it was for.**
+        Account A invited account B; the invite row existed and account A
+        could see it as "Invited"; account B's Profile page showed nothing at
+        all, with no error anywhere. Root cause, confirmed live by
+        impersonating the actual invited user before touching any code:
+        their own `list_collaborators` row WAS visible to them
+        (`user_id = auth.uid()` passes, as designed), but `can_view_list()`
+        only counted an *accepted* collaborator, never a merely *invited*
+        one — so `getPendingInvites()`'s `list:lists!inner(...)` embed
+        silently dropped the row, because the embedded `lists` row failed
+        its own visibility check. An invite that exists and is readable on
+        one side and simply never appears on the other, with a 200 and no
+        error, is a hard failure mode to catch any way other than live,
+        cross-account testing. Fixed in
+        `20260810000002_lists_invite_visibility_fix.sql`: `can_view_list()`
+        now also counts `status = 'invited'`, on the reasoning that you
+        obviously need to see which list you've been invited to in order to
+        decide whether to accept it. Deliberately narrow — `can_edit_list()`
+        is untouched, so an invitee gains read access to the list and its
+        items only, never the ability to add items, edit the list, or touch
+        the collaborator roster; verified by two new adversarial checks
+        (3b/3b2) that an invited-not-accepted bob still can't write anything.
+      - **The adversarial suite had a real gap, not just the policy.** The
+        original check 3a asserted the OPPOSITE of the now-correct behavior
+        (that an invited collaborator should see NOTHING) — 17 checks passed
+        against a schema where the one person who needed to see a pending
+        invite couldn't. Rewritten as 3a/3a2 (list and items ARE visible to
+        an invitee) plus 3b/3b2 (still no write access), re-verified clean
+        against a fresh PostgreSQL 18 cluster with both migrations applied in
+        order. Writing this check caught a second, smaller bug in the TEST
+        itself while it was being written: an `UPDATE` blocked by RLS doesn't
+        raise (same 0-rows-not-an-error semantics check 14b already
+        documents), so a `begin/exception` block around it unconditionally
+        "failed" regardless of whether the row actually changed — fixed by
+        re-reading the row afterward instead of trusting the absence of an
+        exception.
+      - **A third thing investigated and NOT found to be a bug**: account A's
+        session was unexpectedly signed out mid-session, right as an invite
+        was submitted. Checked directly rather than assumed: no code in
+        `lib/lists/` touches session state at all (the only `signOut` call in
+        the codebase lives in `lib/auth/actions.ts` and nothing in the list
+        path calls it), and Supabase's own auth audit log had no explicit
+        logout event for the window in question. Concluded ordinary session
+        expiry over real wall-clock time, not a list-specific bug — noted
+        here in case the same symptom recurs at the same point in a future
+        session, which would upgrade it from coincidence to something worth
+        re-opening.
 
 ---
 
