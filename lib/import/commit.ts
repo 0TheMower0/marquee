@@ -2,6 +2,11 @@ import type { TitleSummary } from "@/lib/content/types";
 import { ratingsStore } from "@/lib/ratings/store";
 import type { RatingEntry } from "@/lib/ratings/types";
 import { announceLocalChange } from "@/lib/sync/engine";
+import {
+  recordRatingWrite,
+  recordTitleWrite,
+  recordWatchEvents,
+} from "@/lib/sync/record";
 import { trackingStore } from "@/lib/tracking/store";
 import { entryKey, type TrackingEntry, type TrackingStatus } from "@/lib/tracking/types";
 import { watchLogStore } from "@/lib/watchlog/store";
@@ -40,6 +45,27 @@ import type { ImportRow, ResolvedRow } from "./types";
  *
  * The worst outcome this can produce is a duplicate or a resurrection. It
  * cannot lose anything the user already had.
+ *
+ * ============================================================================
+ * EVERY LOCAL WRITE HERE MUST ALSO GO THROUGH lib/sync/record.ts
+ * ============================================================================
+ * Shipped without this and found afterwards, by noticing there was no outbox
+ * at all while cleaning up test data: an import wrote straight to
+ * `trackingStore` / `ratingsStore` / `watchLogStore` and never reached the
+ * sync seam, so for a signed-in user a three-thousand-row import landed on
+ * ONE device and silently never appeared on any other.
+ *
+ * That is the failure mode `record.ts`'s own header warns about from the
+ * other direction: every mutation in this app passes through a small number
+ * of choke points, and an operation added later is covered automatically
+ * *because* it goes through the funnel. This module bypassed the funnels and
+ * therefore got none of it.
+ *
+ * Nothing complained, because nothing could: the local write succeeded, the
+ * UI was correct, and the tests used an in-memory driver with no sync layer
+ * mounted. `commit-sync.test.ts` now installs a real sync user and asserts on
+ * the real outbox contents, so a future write added here without a recorder
+ * fails a test instead of quietly not syncing.
  */
 
 /** Progress order. A commit may only move a title UP this ladder. */
@@ -188,7 +214,12 @@ export async function commitRow(
 
   let titleWritten = false;
   if (!existing || status !== existing.status) {
-    await trackingStore.set(key, toTrackingEntry(existing, summary, status, now));
+    const entry = toTrackingEntry(existing, summary, status, now);
+    await trackingStore.set(key, entry);
+    // Queued AFTER the local write succeeds — `lib/sync/record.ts`'s standing
+    // rule: never upload what did not persist, or the next pull reinstalls a
+    // change the user never actually made. No-ops when signed out.
+    await recordTitleWrite(entry);
     titleWritten = true;
   }
 
@@ -209,6 +240,7 @@ export async function commitRow(
         updatedAt: now,
       };
       await ratingsStore.set(key, entry);
+      await recordRatingWrite(entry);
       ratingWritten = true;
     }
   }
@@ -230,7 +262,13 @@ export async function commitRow(
     const alreadyPresent = eventId !== null && existingDay.some((e) => e.id === eventId);
 
     if (!alreadyPresent) {
-      await watchLogStore.set(day, [...existingDay, toWatchEvent(summary, eventId)]);
+      const event = toWatchEvent(summary, eventId);
+      await watchLogStore.set(day, [...existingDay, event]);
+      // `dayKey` passed through verbatim, never re-derived — the row must
+      // carry the date the film was actually watched, not today.
+      // `recordWatchEvents` skips id-less events, which is exactly the
+      // signed-out case where there is nothing to sync anyway.
+      await recordWatchEvents(day, [event]);
       eventWritten = true;
     }
   }
