@@ -1,4 +1,5 @@
 import type { MediaType, PagedResult, TitleSummary } from "@/lib/content/types";
+import { mapWithConcurrency } from "@/lib/utils/concurrency";
 
 import {
   isUnsupportedRow,
@@ -78,30 +79,6 @@ export function dedupKey(row: ImportRow): string {
  */
 function needsLookup(row: ImportRow): boolean {
   return !isUnsupportedRow(row);
-}
-
-/** Runs `fn` over `items` with at most `limit` in flight. A plain
- *  `Promise.all` over 3,000 rows would open 3,000 sockets at once; a
- *  sequential loop would take minutes. */
-async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    for (;;) {
-      const index = cursor;
-      cursor += 1;
-      if (index >= items.length) return;
-      results[index] = await fn(items[index]);
-    }
-  });
-
-  await Promise.all(workers);
-  return results;
 }
 
 /** The media type a TMDB id must be looked up under. An `unknown` hint

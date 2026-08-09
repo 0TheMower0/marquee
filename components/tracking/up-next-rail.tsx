@@ -30,9 +30,12 @@ export function UpNextRail() {
   if (!hasWatchingShows || nothingToShow) {
     return (
       <section aria-labelledby="up-next-heading">
-        <h2 id="up-next-heading" className="font-display text-display-lg text-fg uppercase">
-          Up Next
-        </h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="up-next-heading" className="font-display text-display-lg text-fg uppercase">
+            Up Next
+          </h2>
+          <ScheduleLink />
+        </div>
         {/* Trending is one scroll away on this exact page, so only Search —
             "go find something to start" — is offered here. Library's
             ContinueWatchingSection, which has no Trending nearby, offers
@@ -54,9 +57,12 @@ export function UpNextRail() {
 
   return (
     <section aria-labelledby="up-next-heading">
-      <h2 id="up-next-heading" className="font-display text-display-lg text-fg uppercase">
-        Up Next
-      </h2>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="up-next-heading" className="font-display text-display-lg text-fg uppercase">
+          Up Next
+        </h2>
+        <ScheduleLink />
+      </div>
 
       <UpNextRow
         items={ready}
@@ -114,6 +120,23 @@ function UpNextRow({
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * Entry point into `/schedule` (Phase 7) — placed on the Up Next heading row
+ * specifically, not Home's page header, because this is the exact moment a
+ * visitor is already looking at "what's in progress" and a fuller calendar
+ * of what's coming next is the natural next question. Rendered in BOTH of
+ * UpNextRail's return branches (empty and populated) so it's discoverable
+ * even for someone with nothing "watching" yet but something "watched" that
+ * has since aired a new episode — exactly the case Up Next itself can't show.
+ */
+function ScheduleLink() {
+  return (
+    <Button href="/schedule" variant="ghost" size="sm">
+      Full schedule
+    </Button>
   );
 }
 

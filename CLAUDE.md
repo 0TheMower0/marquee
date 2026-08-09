@@ -1437,7 +1437,7 @@ wrong, verify what the row you're writing actually contains first.
 | 4 *(done)* | Rich detail pages with artwork-derived dynamic theming |
 | 5 *(step 6 outstanding)* | XP, levels, streaks, badges, stats dashboard; PWA manifest + service worker |
 | 6 *(done)* | API rate limiting, Supabase accounts + sync, spoiler-safe comments, shared lists — design in `docs/phase-6-sync-design.md` |
-| **7** *(current)* | CSV importers (IMDb, Letterboxd, Trakt done; TV Time deliberately skipped), new-episode notifications — design in `docs/phase-7-import-design.md` |
+| **7** *(current)* | CSV importers (IMDb, Letterboxd, Trakt done; TV Time deliberately skipped), the new-episode feed (done), new-episode push notifications (blocked on Phase 5 Step 6) — design in `docs/phase-7-import-design.md` |
 | 8 | Year in Review |
 
 **Do not build ahead of the current phase.** Architect so later phases slot in;
@@ -3430,9 +3430,16 @@ not erode.
         immediately. Same shape as Step 5c's "the diagnostic that cannot be
         clicked".
       - 252 import tests; 732 across the suite.
-      - **Not yet done**: `traktTmdbId` is written and tested but unwired, so
-        a VIP export still spends an IMDb lookup it does not need; and no
-        run has been done against a hand-edited export with wrong years.
+      - **Not yet done** (at the time this was first written): `traktTmdbId`
+        was written and tested but unwired. ⚠️ **CORRECTED**: it is wired —
+        `resolve.ts`'s Tier 0 reads `row.tmdbId` generically for every source,
+        and `parseTrakt` populates that field via `traktTmdbId`, so a VIP
+        export's TMDB id is used directly and spends no IMDb lookup at all.
+        This note sat stale for a step before being caught while writing up
+        Step 4b — a reminder that a "not yet done" note needs to be deleted
+        the moment the gap closes, not left for the next reader to trust.
+        Still genuinely outstanding: no run has been done against a
+        hand-edited export with wrong years.
 - [x] **Step 4** — TV Time importer: deliberately SKIPPED, not deferred.
       TV Time shut down; anyone who had data there has already moved it to
       Trakt (which this project supports) or lost it. Verifying an archived
@@ -3442,11 +3449,120 @@ not erode.
       verifiable export at all. This one is live, verifiable, and skipped
       anyway because the audience is gone. Checked off rather than left as an
       open box, so it reads as a decision and not a TODO nobody actioned.
-- [ ] **Step 5** — New-episode notifications. **Blocked on Phase 5 Step 6**
-      (PWA manifest + service worker), which is still outstanding — see the
-      roadmap table. Do not build service-worker infrastructure as a side
-      effect of this step; go finish Step 6 on its own terms first. See the
-      note on sequencing where Phase 5 Step 6 is listed above.
+- [x] **Step 4b** — The new-episode feed (`lib/schedule/`, `components/schedule/`,
+      `/schedule`). A calendar-style view of every "watching" or "watched"
+      show's next unwatched episode, grouped into **Ready to watch** (already
+      aired, unwatched — the headline section), **This week**, and **Later**.
+      Split out of the original "new-episode notifications" roadmap line on
+      purpose: this is the in-app display half, needs no service worker, and
+      was finished ahead of the push half, which stays blocked on Phase 5
+      Step 6 (below).
+      - **Not a reimplementation of the Up Next ranking engine
+        (`lib/tracking/upnext.ts`) — the same underlying question, asked over
+        a wider set of shows.** `lib/schedule/build.ts`'s
+        `selectScheduleCandidates` calls the exact same two functions
+        `selectUpNextCandidates` does — `reconcileCoarseWatched` then
+        `nextUnwatchedEpisode` — rather than duplicating them. The one
+        difference is the status filter: Up Next stops at `"watching"`
+        ("continue", not "discover"); the feed also includes `"watched"`,
+        because the feed's single most valuable state — a show marked fully
+        watched that has SINCE aired an episode nobody told it about — only
+        exists for shows Up Next has already stopped looking at.
+        `"watchlist"` stays excluded from both: nothing started, nothing to
+        have missed.
+      - **"Between seasons" and "ended" needed no extra data or extra
+        branching to handle gracefully — they're just the empty case.**
+        `nextUnwatchedEpisode` returns `null` the moment a show is fully
+        caught up on everything TMDB currently lists, which is exactly what
+        both situations look like from the data available. No `Title.status`
+        field, no extra `getTitle` call per show — the feed simply produces
+        nothing for that show, which is correct: a feed whose entire point is
+        "what's actionable" has nothing to say about a show with nothing
+        actionable, and a synthetic "nothing new" card would be pure noise at
+        library scale.
+      - **A "today" bucket was requested but deliberately not built as a
+        fourth, separate group.** This project already has exactly one
+        convention for "has this air date happened yet" — `isFutureAirDate`
+        (lib/utils/dates.ts), which treats a same-day date as already aired.
+        A literal "today" bucket for UPCOMING episodes would need same-day to
+        mean the opposite thing in the same feature, which is precisely the
+        kind of competing-convention bug CLAUDE.md already warns about for
+        `localDayKey` vs `toISOString().slice(0, 10)`. So a same-day episode
+        lands in "Ready to watch" — which is also strictly better UX: it's
+        the single most valuable thing this feed can show, and burying it one
+        tier down as merely "today's upcoming" would undersell it.
+      - **A real UTC/local mismatch, caught by the test suite before it ever
+        reached a browser.** The first draft's bucket boundary called
+        `isFutureAirDate` (which always reads the real system clock) for the
+        ready/not-ready split, then separately compared an explicit `today`
+        parameter (for test determinism) against the air date to decide
+        this-week vs later. Those two "todays" can disagree — and did, the
+        moment a test pinned `today` to a date in the past relative to the
+        real clock: every future-dated fixture bucketed as "ready" instead of
+        "this-week"/"later", because `isFutureAirDate` was still comparing
+        against the REAL today. Fixed by not calling `isFutureAirDate` here
+        at all — `bucketFor` reimplements the identical comparison via
+        `dayDifference` (lib/watchlog/types.ts) against the one explicit
+        `today` the whole function uses, so ready/this-week/later can never
+        disagree with each other about what day it is. The "today" reference
+        itself is UTC (`new Date().toISOString().slice(0, 10)`), matching
+        `isFutureAirDate`'s own convention for a calendar-date field — NOT
+        `localDayKey()`, which is the right "today" for a watch EVENT
+        (anchored to where the user physically was) but the wrong one for
+        TMDB's own UTC-dated schedule.
+      - **Fetch cost was the explicit brief** ("someone tracking 40 shows
+        shouldn't trigger 40 calls on page load"), and is met with the same
+        two-stage shape `use-up-next-items.ts` already established
+        (`getSeasons` for every eligible show, then `getSeasonEpisodes` for
+        just each show's ONE target season) plus one addition: both stages
+        now go through `mapWithConcurrency` (extracted from
+        `lib/import/resolve.ts` into `lib/utils/concurrency.ts` — Phase 7
+        Step 1 built it to cap upstream lookups during CSV resolution, and a
+        second hand-written copy here would have been exactly the kind of
+        duplicated logic that has drifted out of sync elsewhere in this
+        codebase before) with a concurrency cap of 4. Up Next's own unbounded
+        fan-out is left as-is and is still the right call THERE — a rail is
+        realistically a handful of in-progress shows — but a feed spanning
+        every watching-or-watched show is precisely the wide-fan-out case the
+        cap exists for. Each response still lands in Next's 24h TMDB data
+        cache regardless, so the cap only bounds concurrent in-flight
+        requests on a cold load, not total requests paid over time.
+      - **Entry point: a "Full schedule" link on the Up Next rail's own
+        heading row on Home**, not a 5th global nav item (`NAV_ITEMS` stays
+        the fixed Phase 1 four) and not buried on Library. Rendered in BOTH
+        of `UpNextRail`'s branches (empty and populated) specifically so it's
+        reachable even for a visitor with nothing "watching" yet — exactly
+        the visitor whose "watched" show might have a new episode waiting,
+        which Up Next itself has no way to surface.
+      - Marking an episode watched from a schedule card reuses
+        `markEpisodeWatched` from `useTracking()` directly (the same
+        function `UpNextCard` calls) — no new mutation path, no new
+        optimistic-update/rollback logic.
+      - 16 new tests in `lib/schedule/build.test.ts` (candidate inclusion
+        for both statuses, watchlist/movie exclusion, the coarse-watched
+        reconciliation, a new season appearing mid-caught-up, the dropped-
+        candidate cases, every bucket boundary including same-day and the
+        exact 7-day edge, and sort order including a null air date sorting
+        last) — 754 across the suite.
+      - **Verified live**, not just unit-tested: `/schedule` renders real
+        tracked shows from local storage (Breaking Bad and Stranger Things,
+        both correctly bucketed "Ready to watch" from the existing mock
+        library), the Home entry point link resolves to `/schedule`, and
+        clicking "Mark watched" on a card correctly advances that show to
+        its next unwatched episode end-to-end — confirming the write path
+        through the real `useTracking()` context, not a stub. The
+        this-week/later buckets were NOT separately clicked through live, to
+        avoid adding synthetic tracking entries to the same real browser
+        profile Phase 7's earlier steps had to deliberately clean test data
+        out of — covered instead by the unit tests exercising the identical
+        `ScheduleSection` rendering path.
+- [ ] **Step 5** — New-episode PUSH notifications. **Blocked on Phase 5
+      Step 6** (PWA manifest + service worker), which is still outstanding —
+      see the roadmap table. Do not build service-worker infrastructure as a
+      side effect of this step; go finish Step 6 on its own terms first. See
+      the note on sequencing where Phase 5 Step 6 is listed above. Distinct
+      from Step 4b (done): this step is specifically about paging someone
+      while the app is closed, not about what the app shows while open.
 
 ---
 
