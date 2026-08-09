@@ -34,6 +34,7 @@ function row(overrides: Partial<ImportRow> = {}): ImportRow {
     source: "letterboxd-diary",
     sourceRowId: `r:${line}`,
     imdbId: null,
+    tmdbId: null,
     title: "Breaking Bad",
     originalTitle: null,
     year: 2008,

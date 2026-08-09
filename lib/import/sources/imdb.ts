@@ -96,6 +96,7 @@ function baseRow(
     // different file and therefore a different importId.
     sourceRowId: `${source}:${record.line}`,
     imdbId: imdbId(record.get("Const")),
+    tmdbId: null,
     title: record.get("Title") ?? "",
     originalTitle: record.get("Original Title"),
     year: parseYear(record.get("Year")),

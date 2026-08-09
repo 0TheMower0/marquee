@@ -70,6 +70,17 @@ export interface ImportRow {
   /** `tt0068646`. Present for IMDb exports, NEVER for Letterboxd — see §0.1
    *  of the design doc. */
   imdbId: string | null;
+  /**
+   * OUR own id, when the source already knows it. Only Trakt supplies this.
+   *
+   * This is the one tier that needs no search and no id translation — the
+   * value IS the answer, subject to confirming the title exists. It matters
+   * most for community-tool Trakt exports configured with `tmdb` ids, which
+   * carry no `year` at all: without reading this, every such row falls to
+   * title-only matching and can never reach `confident` (§2.3), so it would
+   * be a whole export destined for the review queue.
+   */
+  tmdbId: string | null;
   title: string;
   /** IMDb watchlist exports carry this; it is a second string to try when the
    *  primary title doesn't match (foreign films are the common case). */
@@ -169,6 +180,7 @@ export function isImportRow(value: unknown): value is ImportRow {
   if (typeof row.sourceRowId !== "string" || row.sourceRowId.length === 0) return false;
   if (typeof row.title !== "string") return false;
   if (!isNullableString(row.imdbId)) return false;
+  if (!isNullableString(row.tmdbId)) return false;
   if (!isNullableString(row.originalTitle)) return false;
   if (!isNullableString(row.slug)) return false;
   if (!isNullableString(row.ratedOn)) return false;

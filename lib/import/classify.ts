@@ -123,7 +123,12 @@ export function resolveByExternalId(row: ImportRow, title: TitleSummary): Resolv
       {
         summary: title,
         score: 100,
-        reason: `matched by IMDb id ${row.imdbId}`,
+        // Names the id that ACTUALLY matched. Hardcoding "IMDb" here read as
+        // "matched by IMDb id null" once a TMDB-id tier existed — a review
+        // queue whose explanations can be wrong is worse than one with none.
+        reason: row.tmdbId
+          ? `matched by TMDB id ${row.tmdbId}, supplied by the export`
+          : `matched by IMDb id ${row.imdbId}`,
       },
     ],
     chosen: isUnsupported(row) ? null : title,

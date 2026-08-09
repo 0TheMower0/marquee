@@ -59,6 +59,7 @@ function row(overrides: Partial<ImportRow> = {}): ImportRow {
     source: "letterboxd-diary",
     sourceRowId: "letterboxd-diary:2",
     imdbId: null,
+    tmdbId: null,
     title: "Gravity",
     originalTitle: null,
     year: 2013,

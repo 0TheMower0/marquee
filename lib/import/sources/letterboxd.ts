@@ -107,6 +107,7 @@ function baseRow(
     // Never present. Stated explicitly rather than left implicit, because the
     // whole matching strategy branches on it.
     imdbId: null,
+    tmdbId: null,
     title: record.get("Name") ?? "",
     originalTitle: null,
     year: parseYear(record.get("Year")),

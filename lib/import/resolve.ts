@@ -1,4 +1,4 @@
-import type { PagedResult, TitleSummary } from "@/lib/content/types";
+import type { MediaType, PagedResult, TitleSummary } from "@/lib/content/types";
 
 import {
   isUnsupportedRow,
@@ -26,6 +26,10 @@ import type { ImportRow, ResolvedRow } from "./types";
 export interface ResolveDeps {
   findByExternalId(imdbId: string): Promise<TitleSummary[]>;
   searchTitles(query: string): Promise<PagedResult<TitleSummary>>;
+  /** Confirms a TMDB id the SOURCE supplied. Rejects with `not_found` for an
+   *  id that no longer exists, which is why this is a confirmation rather
+   *  than a bare trust. */
+  getTitle(id: string, mediaType: MediaType): Promise<TitleSummary>;
 }
 
 /**
@@ -44,6 +48,9 @@ export interface ResolveDeps {
  * lookup and cannot cause a wrong grouping.
  */
 export function dedupKey(row: ImportRow): string {
+  // Ours first: it identifies the title in the namespace we actually store,
+  // with no translation step that could fail.
+  if (row.tmdbId) return `tmdb:${row.tmdbId}`;
   if (row.imdbId) return `imdb:${row.imdbId}`;
   if (row.slug) return `slug:${row.slug}`;
   return `title:${normalizeTitle(row.title)}:${row.year ?? "?"}`;
@@ -97,6 +104,15 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+/** The media type a TMDB id must be looked up under. An `unknown` hint
+ *  cannot choose, and guessing would fetch the wrong catalogue entirely. */
+function resolvableMediaType(row: ImportRow): MediaType | null {
+  if (row.mediaTypeHint === "movie") return "movie";
+  // An episode belongs to a series, so its id is a TV id.
+  if (row.mediaTypeHint === "tv" || row.mediaTypeHint === "episode") return "tv";
+  return null;
+}
+
 export interface ResolveOptions {
   /** Simultaneous upstream requests. Four is comfortably inside TMDB's limits
    *  without needing to track their exact current number, and keeps one
@@ -122,9 +138,28 @@ export interface ResolveOptions {
  * If it returns MORE than one, the row is ambiguous and does NOT fall through
  * — a title search cannot resolve a genuine id collision, and running one
  * would replace a known-ambiguous answer with a differently-ambiguous one.
+ *
+ * Tier 0 sits above both: a source that already knows OUR id needs no
+ * translation at all. See the comment at its call site.
  */
 async function resolveGroup(row: ImportRow, deps: ResolveDeps): Promise<ResolvedRow> {
   try {
+    // ---- Tier 0: the source already knows OUR id -----------------------
+    // Confirmed rather than trusted blindly: a stale id rejects with
+    // `not_found` and falls through, which is better than writing a tracking
+    // entry pointing at a title that no longer exists. Confirmation costs
+    // one call — the same as the IMDb translation it replaces — so the win
+    // here is COVERAGE, not speed: a community Trakt export with `tmdb` ids
+    // and no `year` has no other path to `confident` at all.
+    const mediaType = resolvableMediaType(row);
+    if (row.tmdbId && mediaType) {
+      try {
+        return resolveByExternalId(row, await deps.getTitle(row.tmdbId, mediaType));
+      } catch {
+        // Fall through to the id-translation and title tiers.
+      }
+    }
+
     if (row.imdbId) {
       const found = await deps.findByExternalId(row.imdbId);
       if (found.length === 1) return resolveByExternalId(row, found[0]);

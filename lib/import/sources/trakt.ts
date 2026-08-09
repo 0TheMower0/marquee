@@ -204,6 +204,8 @@ function toRow(record: CsvRecord, source: ImportSource, timestamp: string | null
     source,
     sourceRowId: `${source}:${record.line}`,
     imdbId: imdbId(record),
+    // Ours, straight from the export — the tier that needs no translation.
+    tmdbId: traktTmdbId(record),
     title,
     originalTitle: null,
     year: parseYear(record.get("year")),

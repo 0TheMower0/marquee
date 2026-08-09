@@ -33,6 +33,7 @@ function row(overrides: Partial<ImportRow> = {}): ImportRow {
     source: "letterboxd-diary",
     sourceRowId: `letterboxd-diary:${overrides.sourceLine ?? 2}`,
     imdbId: null,
+    tmdbId: null,
     title: "Gravity",
     originalTitle: null,
     year: 2013,
@@ -55,6 +56,12 @@ function deps(overrides: Partial<ResolveDeps> = {}): ResolveDeps {
   return {
     findByExternalId: async () => [],
     searchTitles: async () => page([]),
+    // Defaults to rejecting, matching a provider that does not know the id —
+    // so a test must opt IN to Tier 0 succeeding rather than getting it for
+    // free and hiding a tier-ordering mistake.
+    getTitle: async () => {
+      throw new Error("not_found");
+    },
     ...overrides,
   };
 }
@@ -133,6 +140,78 @@ describe("resolveRows — deduplication", () => {
       row({ mediaTypeHint: "episode", title: "Ozymandias", sourceLine: 5 }),
     ];
     expect(lookupCount(rows)).toBe(2);
+  });
+});
+
+describe("resolveRows — Tier 0, an id the source already knows", () => {
+  it("uses a supplied TMDB id and skips both other tiers", async () => {
+    const getTitle = vi.fn(async () => title("238", "The Godfather", 1972));
+    const findByExternalId = vi.fn(async () => []);
+    const searchTitles = vi.fn(async () => page([]));
+
+    const resolved = await resolveRows(
+      [row({ tmdbId: "238", imdbId: "tt0068646", title: "The Godfather", year: 1972 })],
+      deps({ getTitle, findByExternalId, searchTitles }),
+    );
+
+    expect(getTitle).toHaveBeenCalledWith("238", "movie");
+    expect(findByExternalId).not.toHaveBeenCalled();
+    expect(searchTitles).not.toHaveBeenCalled();
+    expect(resolved[0].bucket).toBe("exact");
+  });
+
+  it("looks a TV id up as tv, and an EPISODE row's id as tv too", async () => {
+    // An episode belongs to a series, so its id is a series id. Looking it up
+    // as a movie would fetch a different catalogue entirely.
+    const getTitle = vi.fn(async () => title("1396", "Breaking Bad", 2008, "tv"));
+    await resolveRows(
+      [row({ tmdbId: "1396", mediaTypeHint: "episode", season: 5, episode: 14 })],
+      deps({ getTitle }),
+    );
+    expect(getTitle).toHaveBeenCalledWith("1396", "tv");
+  });
+
+  it("does NOT use a TMDB id when the media type is unknown", async () => {
+    // Guessing would fetch the wrong catalogue; falling through is honest.
+    const getTitle = vi.fn(async () => title("1", "X", 2000));
+    await resolveRows(
+      [row({ tmdbId: "999", mediaTypeHint: "unknown", title: "X" })],
+      deps({ getTitle, searchTitles: async () => page([title("1", "X", 2013)]) }),
+    );
+    expect(getTitle).not.toHaveBeenCalled();
+  });
+
+  it("FALLS THROUGH when the supplied id no longer exists", async () => {
+    // Confirmed, not trusted: a stale id must not write a tracking entry
+    // pointing at a title that is gone.
+    const getTitle = vi.fn(async () => {
+      throw new Error("not_found");
+    });
+    const findByExternalId = vi.fn(async () => [title("238", "The Godfather", 1972)]);
+
+    const resolved = await resolveRows(
+      [row({ tmdbId: "99999999", imdbId: "tt0068646" })],
+      deps({ getTitle, findByExternalId }),
+    );
+
+    expect(getTitle).toHaveBeenCalled();
+    expect(findByExternalId).toHaveBeenCalled();
+    expect(resolved[0].chosen?.id).toBe("238");
+  });
+
+  it("resolves a tmdb-id-only row that has NO year — the coverage win", async () => {
+    // A community Trakt export configured with tmdb ids carries no year, so
+    // title matching could never reach `confident` for it (§2.3). Tier 0 is
+    // its only path.
+    const resolved = await resolveRows(
+      [row({ tmdbId: "238", imdbId: null, year: null, title: "The Godfather" })],
+      deps({ getTitle: async () => title("238", "The Godfather", 1972) }),
+    );
+    expect(resolved[0].bucket).toBe("exact");
+  });
+
+  it("dedups on the TMDB id ahead of everything else", () => {
+    expect(dedupKey(row({ tmdbId: "238", imdbId: "tt0068646" }))).toBe("tmdb:238");
   });
 });
 
