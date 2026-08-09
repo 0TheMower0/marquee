@@ -99,7 +99,7 @@ does not offer.
 | Navigation to an **allowlisted static route** | **network-first**, cache as fallback | An online user always gets the current build; the cache is purely the offline path. This is also what stops a stale worker pinning a live user to an old page. |
 | Navigation to **anything else** | **never cached**; network-only, `/offline` on failure | The account-scoped set from §1. |
 | `/api/content/**` | **stale-while-revalidate**, bounded ~150 entries | A pure TMDB/mock proxy: no auth, no personal data, identical for every caller. This is what makes `/schedule` and Up Next work offline with last-known season data rather than being decorative. **See §7.2 — this assumption is guarded by a test, not a comment.** |
-| `/_next/image?url=…` (TMDB posters) | **cache-first**, bounded LRU ~60 entries | Content, not personal. The bulk of the bytes. The bound is load-bearing — see §8. |
+| `/_next/image?url=…` (TMDB posters) | **cache-first**, bounded ~60 entries | Content, not personal. The bulk of the bytes. The bound is load-bearing — see §8. |
 | `*.supabase.co`, Server Action POSTs, `/api/import/resolve`, **any non-GET** | **passthrough — never read, never written** | Account-scoped or mutating. |
 
 Note that TMDB images are never fetched cross-origin by the browser: `next/image`
@@ -125,6 +125,36 @@ cached until it has been requested once. So on `install` the worker:
 3. If the scrape yields nothing, it degrades to runtime caching rather than
    failing the install. The caveat then becomes "offline works from the second
    visit", which is a degradation, not a breakage.
+
+Measured on a real production build: **5 shell documents and 19 static assets
+precached on the very first install**, so the scrape does its job and the
+second-visit caveat does not apply in practice.
+
+### 3.1 `install` does not run again — the shell needs a self-heal
+
+⚠️ **Found while verifying step 2, and it is a real gap rather than a testing
+artifact.** `install` fires once per worker VERSION. An already-installed
+worker that loses its caches never rebuilds them — it carries on serving with
+nothing cached, and offline silently stops working until the next deploy.
+
+That is exactly what browser storage eviction under quota pressure produces,
+which is the very scenario §8's bounds exist to manage. Discovered by deleting
+the caches out from under a live worker and finding it never recovered.
+
+Most of the cache already self-heals without help: navigations re-cache
+allowlisted routes on every visit, and `/_next/static/**` is cache-first so a
+miss simply refetches. **The irreducible gap is `/offline`** — the one entry
+that is only ever needed at the moment the network is gone, and therefore the
+one that can never be fetched on demand when it is missing.
+
+So `/offline` is used as a sentinel: once per worker startup, on the first
+navigation, the worker checks for it and re-runs the precache if it is absent.
+Off the response path (`waitUntil`, never `respondWith`), failure swallowed,
+and the guard promise is reset on failure so a later navigation can retry
+rather than being stuck for the worker's lifetime.
+
+Verified: caches wiped from under a live worker, one navigation, all five
+shell routes and twenty static assets restored.
 
 **`/offline` is a real route, not a browser error page.** It should name which
 parts of the app still work and link to `/library` and `/schedule`, which
@@ -312,6 +342,18 @@ feature added for offline *convenience*.
 That is why the bounds in §2 are a **data-safety** measure, not tidiness, and
 why they should be commented as such so nobody relaxes them for a smoother
 scroll.
+
+**Eviction is also what makes §3.1's self-heal necessary**, not merely nice —
+a worker whose caches were evicted does not re-run `install`, so without it
+the mitigation for this section's risk would itself be the thing that
+permanently disabled offline support.
+
+Note the bound is **FIFO, not LRU**, correcting this document's earlier
+wording. `cache.keys()` returns insertion order, so eviction drops the
+oldest-*written* entry. True LRU would mean re-putting an entry on every read
+to move it to the end — doubling writes on every cache hit to better order a
+bound that exists only to stop unbounded growth. The bound is what matters,
+not which entry loses.
 
 Paired mitigation: request **`navigator.storage.persist()`**, which exempts the
 origin from eviction where granted. It is a strong fit for a local-first app and

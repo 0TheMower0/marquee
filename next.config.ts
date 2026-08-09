@@ -1,5 +1,44 @@
+import { execFileSync } from "node:child_process";
 import { networkInterfaces } from "node:os";
 import type { NextConfig } from "next";
+
+/**
+ * The build id baked into the service worker's registration URL
+ * (`/sw.js?v=…`), which is what makes a deploy produce a new worker and
+ * therefore an update. See components/pwa/service-worker-registration.tsx.
+ *
+ * ============================================================================
+ * WHY A GIT SHA AND NOT A TIMESTAMP
+ * ============================================================================
+ * It must be DETERMINISTIC. `next.config.ts` can be evaluated more than once
+ * during a build, and `env` values are inlined into the client bundle from
+ * whichever evaluation the compiler used — a `Date.now()` here could in
+ * principle inline two different versions into two different chunks, which is
+ * exactly the class of bug that only appears after deploy. A commit SHA is
+ * the same on every evaluation and changes on every real deploy.
+ *
+ * Known limitation, stated rather than hidden: uncommitted local changes do
+ * NOT bump this, so a rebuilt-but-uncommitted worker looks unchanged to the
+ * browser. That never happens on Vercel (every deploy is a commit); locally,
+ * set `SW_VERSION` to force one while testing update behaviour.
+ */
+function serviceWorkerVersion(): string {
+  if (process.env.SW_VERSION) return process.env.SW_VERSION;
+  if (process.env.VERCEL_GIT_COMMIT_SHA) {
+    return process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 12);
+  }
+  try {
+    return execFileSync("git", ["rev-parse", "--short=12", "HEAD"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+  } catch {
+    // No git (a tarball build, say). "dev" is a stable fallback — it means
+    // updates rely on the worker's own bytes changing, which is still true.
+    return "dev";
+  }
+}
 
 /**
  * Every non-loopback IPv4 address this machine currently has.
@@ -70,6 +109,36 @@ const nextConfig: NextConfig = {
         pathname: "/t/p/**",
       },
     ],
+  },
+
+  env: {
+    NEXT_PUBLIC_SW_VERSION: serviceWorkerVersion(),
+  },
+
+  async headers() {
+    return [
+      {
+        source: "/sw.js",
+        headers: [
+          /**
+           * HALF of the stale-worker guard; the other half is
+           * `updateViaCache: "none"` at registration. Either alone is
+           * insufficient — see the long note in
+           * components/pwa/service-worker-registration.tsx.
+           *
+           * Without both, a browser or CDN can serve a day-old worker and
+           * there is NO recovery path from inside the app: the stale worker
+           * is the thing that would have to fetch its own replacement.
+           */
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          // Files in `public/` are served with a content type sniffed from the
+          // extension, which is already correct here. Pinned anyway because a
+          // worker script served as anything but JavaScript fails to register
+          // with an error that does not obviously name the cause.
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+        ],
+      },
+    ];
   },
 };
 

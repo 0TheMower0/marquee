@@ -9,6 +9,7 @@ import {
   HydrationFlag,
   InteractivityWarning,
 } from "@/components/shell/interactivity-warning";
+import { ServiceWorkerRegistration } from "@/components/pwa/service-worker-registration";
 import { StorageBanner } from "@/components/storage/storage-banner";
 import { MergePrompt } from "@/components/sync/merge-prompt";
 import { RatingsProvider } from "@/lib/ratings";
@@ -94,6 +95,10 @@ export default function RootLayout({
             Placed outside every provider so nothing can prevent it rendering. */}
         <InteractivityWarning />
         <HydrationFlag />
+        {/* Renders nothing. Outside every provider because it depends on none
+            of them, and registration should not be gated on storage or auth
+            state resolving. */}
+        <ServiceWorkerRegistration />
         {/* Visually hidden until focused — the first Tab stop on any page,
             so a keyboard user can jump past Sidebar/BottomNav straight to
             content instead of tabbing through nav on every single page. */}
