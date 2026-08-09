@@ -320,6 +320,34 @@ adding a single `cookies()` call several layers down, with no local edit to the
 route file at all — trips the guard rather than quietly becoming cacheable
 user-specific HTML.
 
+⚠️ **CORRECTION, decided while building this step.** That full guarantee needs
+a real `next build` — a spawned production build has no place in a unit suite
+that otherwise runs in ~1.3 seconds, so it is NOT wired into `npm test` as an
+automated assertion. This project already has an established alternative for
+exactly this shape of claim: the credential greps in Phase 4 Step 4 and the
+sentinel checks in Phase 6 Step 3 are both **manual verification performed once
+per change**, documented in CLAUDE.md, not standing automated tests. §7.1's
+route-completeness test follows that same discipline here.
+
+What IS automated, as a partial and strictly weaker substitute: every
+`CACHEABLE_ROUTES` entry's `page.tsx` is scanned for a DIRECT
+auth/Supabase/`next/headers` import. This catches the cheap version of the
+mistake (an edit to the route file itself) for free, and says nothing at all
+about the design doc's own worked example — an import several components
+deep — which only a real build's static/dynamic split can see. Both facts are
+stated in the test file itself, not left implicit.
+
+**A real false positive, found immediately on first run**: `app/forgot-
+password/page.tsx` imports `@/lib/supabase/public-env` to call
+`isSupabaseConfigured()`. That import is genuinely safe — `public-env` reads
+only the two credentials CLAUDE.md documents as public by design, and the
+check is a deterministic build-time constant, not a session read — so the
+partial check's Supabase rule excludes that one submodule specifically,
+narrower than §7.2's rule for `/api/content/**` (which has no reason to import
+`@/lib/supabase` at all and stays maximally strict). Worth remembering:
+finding this on the very first real run is the guard working as intended, not
+a sign it was built wrong.
+
 ### 7.2 `/api/content/**` has no auth — as a test, not a comment
 
 Per the brief's second addition, and it is the right call: *"this route family
@@ -351,6 +379,26 @@ after `next build`, confirm the static/dynamic split still matches the
 allowlist, and confirm live that a signed-in title page never appears in Cache
 Storage. A guard that only ever ran against source is not the guard that was
 promised.
+
+**Done, this step.** `lib/pwa/discover-routes.ts`'s structural discovery
+(walking `app/` for `page.tsx`/`route.ts`, no `next build` spawned) produced a
+30-route set written to a file and diffed BY HAND against a real, fresh
+`next build`'s printed route table — byte-for-byte identical, including which
+routes were `○` vs `ƒ`. The same real build was re-run after the guard test
+files were added and produced the identical table again, confirming the guard
+adds no drift of its own.
+
+Both required negative controls (per this step's brief) were run against the
+LIVE repository, not a synthetic harness: a real unclassified route
+(`app/__test-unclassified/page.tsx`) tripped the completeness assertion,
+naming the exact route and pointing at §7.1; a real forbidden import
+(`next/headers`, temporarily added to `app/api/content/trending/route.ts`)
+tripped the no-auth assertion with a message centered on the CACHING RULE it
+would invalidate, not merely "forbidden import found" — the specific bar this
+step set. Both were reverted (`git checkout --`) and the suite re-confirmed
+clean immediately after. A third, self-imposed control (the same forbidden-
+import trip, aimed at the PARTIAL cacheable-routes check from §7.1's
+correction above) was run and reverted the same way.
 
 ---
 

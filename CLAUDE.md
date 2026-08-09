@@ -2076,11 +2076,11 @@ do not implement them early.
         build / typecheck all pass, and the actually-running dev server
         served `/`, `/profile`, and `/profile/stats` all at 200 with zero
         new errors in its log.
-- [ ] **Step 6** — PWA manifest + service worker. **Design in
-      `docs/phase-5-pwa-design.md`, approved 2026-08-09; steps 1–3 of its §10
-      build order are built, step 4 (the guard) is outstanding.** Read the
-      doc before touching this — the caching rule is a consequence of the
-      Phase 6 comments gating and is unsafe to re-derive by eye.
+- [x] **Step 6** — PWA manifest + service worker. Design in
+      `docs/phase-5-pwa-design.md`, approved 2026-08-09; all four steps of
+      its §10 build order are built. Read the doc before touching this — the
+      caching rule is a consequence of the Phase 6 comments gating and is
+      unsafe to re-derive by eye.
       **A prerequisite for Phase 7 Step 5** (new-episode push notifications),
       which needs Web Push and therefore a service worker to deliver anything
       while the app is closed. Built on its own terms — a real manifest, a
@@ -2148,15 +2148,47 @@ do not implement them early.
         controlled by the new worker with the old build's caches deleted.
         Confirmed nothing about dismissal ever touches `localStorage` or
         `sessionStorage`.
-      - [ ] **4/4 — The guard.** Route-classification completeness (every
-        `app/` route either in the cacheable allowlist or explicitly
-        never-cached, checked against the real `○`/`ƒ` build output) and the
-        `/api/content/**` no-auth assertion as a test, not a comment. Two
-        routes added since the design doc was written still need
-        classifying: `/manifest.webmanifest` and `/offline` (both static;
-        the manifest is not a navigation and is never cached today, `/offline`
-        already IS cached as part of the shell) — and `/_not-found`, not yet
-        classified either way.
+      - [x] **4/4 — The guard** (`lib/pwa/`). `discover-routes.ts` walks
+        `app/` for `page.tsx`/`route.ts` structurally rather than spawning
+        `next build` inside the test suite — the discovered 30-route set was
+        diffed BY HAND against a real build's route table and matched
+        exactly, the same manual-verification discipline this project
+        already uses for the Phase 4 Step 4 credential greps and Phase 6
+        Step 3 sentinel checks, not a standing automated assertion.
+        `route-guard.test.ts` classifies every discovered route into exactly
+        one of: `CACHEABLE_ROUTES` (parsed out of `public/sw.js`'s own
+        marker comments, never hand-copied), the `/api/content/**` prefix,
+        or an explicit `NEVER_CACHED_ROUTES` list carrying a reason per
+        entry — mirroring the Phase 7 Step 2 inverted-guard pattern
+        (`SYNC_TABLES_BY_WRITE_KIND`). `/manifest.webmanifest`, `/offline`
+        and `/_not-found` are now classified deliberately rather than by
+        omission — `/_not-found` turned out to be cacheable in name only
+        (`notFound()` renders it inline within another route; no navigation
+        ever reaches it to populate or read a cache entry).
+        The `/api/content/**` no-auth rule is a regex over import specifiers
+        (`@/lib/auth`, `@/lib/supabase`, `next/headers`) — deliberately not a
+        full AST parse, since this exists to catch an ordinary accidental
+        addition, not to defeat deliberate obfuscation.
+        **A bonus check, added beyond what was asked**: every
+        `CACHEABLE_ROUTES` page's OWN file is scanned for the same forbidden
+        imports, stated explicitly as a partial substitute for the real
+        static/dynamic build check (it cannot see an import several
+        components deep — only a real build's `○`/`ƒ` split can). It found a
+        real false positive on the very first run: `/forgot-password` calls
+        `isSupabaseConfigured()` from `@/lib/supabase/public-env`, which
+        CLAUDE.md already documents as public by design and reads no
+        session — narrowed the rule to exclude that one submodule rather
+        than weakening the `/api/content/**` rule, which has no reason to
+        touch Supabase at all and stays maximally strict.
+        **Both required negative controls run against the live repo, not a
+        harness, then reverted with `git checkout --`**: a real unclassified
+        route tripped the completeness assertion by name; a real
+        `next/headers` import added to `app/api/content/trending/route.ts`
+        tripped the no-auth assertion with a message centered on the CACHING
+        RULE it would invalidate, not merely "forbidden import found" — the
+        bar this step explicitly set. A third, self-imposed control proved
+        the bonus partial check too.
+      762 tests across the suite (8 new).
 
 ## Phase 6 status
 
