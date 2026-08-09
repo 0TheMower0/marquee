@@ -1437,7 +1437,7 @@ wrong, verify what the row you're writing actually contains first.
 | 4 *(done)* | Rich detail pages with artwork-derived dynamic theming |
 | 5 *(step 6 outstanding)* | XP, levels, streaks, badges, stats dashboard; PWA manifest + service worker |
 | 6 *(done)* | API rate limiting, Supabase accounts + sync, spoiler-safe comments, shared lists — design in `docs/phase-6-sync-design.md` |
-| **7** *(current)* | CSV importers (IMDb + Letterboxd done; Trakt/TV Time next), new-episode notifications — design in `docs/phase-7-import-design.md` |
+| **7** *(current)* | CSV importers (IMDb, Letterboxd, Trakt done; TV Time deliberately skipped), new-episode notifications — design in `docs/phase-7-import-design.md` |
 | 8 | Year in Review |
 
 **Do not build ahead of the current phase.** Architect so later phases slot in;
@@ -2076,7 +2076,13 @@ do not implement them early.
         build / typecheck all pass, and the actually-running dev server
         served `/`, `/profile`, and `/profile/stats` all at 200 with zero
         new errors in its log.
-- [ ] **Step 6** — PWA manifest + service worker
+- [ ] **Step 6** — PWA manifest + service worker. **Now a prerequisite for
+      Phase 7 Step 5** (new-episode notifications), which needs Web Push and
+      therefore a service worker to deliver anything while the app is closed.
+      Do this step on its own terms — a real manifest, a real service worker
+      with its own caching strategy — rather than building a minimal one as
+      a side effect of the notifications feature. It was already outstanding
+      before notifications created a second reason to finish it.
 
 ## Phase 6 status
 
@@ -3427,8 +3433,20 @@ not erode.
       - **Not yet done**: `traktTmdbId` is written and tested but unwired, so
         a VIP export still spends an IMDb lookup it does not need; and no
         run has been done against a hand-edited export with wrong years.
-- [ ] **Step 4** — TV Time importer, after verifying its format the same way.
-- [ ] **Step 5** — New-episode notifications.
+- [x] **Step 4** — TV Time importer: deliberately SKIPPED, not deferred.
+      TV Time shut down; anyone who had data there has already moved it to
+      Trakt (which this project supports) or lost it. Verifying an archived
+      export format and building a parser for it would be real work in
+      service of a user who most likely does not exist anymore — a different
+      judgment from Moviebase in Step 1, which was dropped for lack of a
+      verifiable export at all. This one is live, verifiable, and skipped
+      anyway because the audience is gone. Checked off rather than left as an
+      open box, so it reads as a decision and not a TODO nobody actioned.
+- [ ] **Step 5** — New-episode notifications. **Blocked on Phase 5 Step 6**
+      (PWA manifest + service worker), which is still outstanding — see the
+      roadmap table. Do not build service-worker infrastructure as a side
+      effect of this step; go finish Step 6 on its own terms first. See the
+      note on sequencing where Phase 5 Step 6 is listed above.
 
 ---
 
