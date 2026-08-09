@@ -44,6 +44,29 @@ export const metadata: Metadata = {
   description:
     "Track every film and series you watch. Free, ad-free, and no paywalls.",
   applicationName: "Marquee",
+  icons: {
+    // `app/favicon.ico` is picked up automatically by the file convention;
+    // this adds the PNG set (scripts/generate-icons.mjs) for everything else.
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    // iOS does NOT read the manifest's icons for the home screen and ignores
+    // `purpose: "maskable"` entirely — it applies its own rounded-square mask
+    // to whatever `apple-touch-icon` points at. So this is a separate file
+    // using the standard (less padded) layout, not the maskable render.
+    // See docs/phase-5-pwa-design.md §5.
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  appleWebApp: {
+    title: "Marquee",
+    // The status bar draws over the app rather than as an opaque strip, which
+    // is what lets the near-black page background run to the top edge instead
+    // of sitting under a lighter band. Pairs with `viewportFit: "cover"`
+    // below — both are needed, and either alone leaves a visible seam.
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export const viewport: Viewport = {
