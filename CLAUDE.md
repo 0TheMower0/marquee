@@ -2076,13 +2076,44 @@ do not implement them early.
         build / typecheck all pass, and the actually-running dev server
         served `/`, `/profile`, and `/profile/stats` all at 200 with zero
         new errors in its log.
-- [ ] **Step 6** — PWA manifest + service worker. **Now a prerequisite for
-      Phase 7 Step 5** (new-episode notifications), which needs Web Push and
-      therefore a service worker to deliver anything while the app is closed.
-      Do this step on its own terms — a real manifest, a real service worker
-      with its own caching strategy — rather than building a minimal one as
-      a side effect of the notifications feature. It was already outstanding
-      before notifications created a second reason to finish it.
+- [ ] **Step 6** — PWA manifest + service worker. **Design approved
+      2026-08-09 and written up in `docs/phase-5-pwa-design.md`; not built.**
+      Read that document before starting — the caching rule in particular is
+      a consequence of the Phase 6 comments gating and is unsafe to
+      re-derive by eye.
+      **Now a prerequisite for Phase 7 Step 5** (new-episode push
+      notifications), which needs Web Push and therefore a service worker to
+      deliver anything while the app is closed. Do this step on its own
+      terms — a real manifest, a real service worker with its own caching
+      strategy — rather than building a minimal one as a side effect of the
+      notifications feature. It was already outstanding before notifications
+      created a second reason to finish it.
+      The load-bearing decisions, in short:
+      - **The worker caches only responses that are byte-identical for every
+        user**, because Cache Storage is origin-scoped and on a shared device
+        one account's cache is the next account's. That line is drawn by
+        `next build`'s own `○ (Static)` / `ƒ (Dynamic)` split rather than by
+        a hand-maintained denylist — and it puts
+        `/title/[mediaType]/[id]` on the never-cached side for free, which
+        matters because that page renders `CommentSection`, gated per reader
+        against their own watch history.
+      - **`/api/content/**` is cached on one assumption** — that it is a pure
+        content proxy with no session read. That assumption is asserted by a
+        test, not a comment, because it is the kind of thing that stays true
+        until it quietly doesn't.
+      - **The route allowlist is inverted** (same pattern as the Phase 7
+        Step 2 sync guard): a new route fails a test until it is explicitly
+        classified cacheable or not. Default outcome is loud-unfinished
+        rather than silent-leak.
+      - **The update prompt is dismissible but persistent** — dismissal is
+        in-memory and per-visit, never stored, so tapping X once cannot strand
+        someone on an old build.
+      - **Image and API cache bounds are a DATA-SAFETY measure, not
+        tidiness**: browsers evict per origin, and this app's entire library
+        lives in `localStorage`, so an unbounded poster cache could get a
+        user's watch history evicted.
+      - Build order: icons + manifest (installable, no worker), then the
+        worker, then the update prompt, then the guard.
 
 ## Phase 6 status
 
