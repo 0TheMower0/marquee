@@ -203,6 +203,29 @@ prevent, just with an extra click in front of it. So:
 Storing the dismissal is the tempting "polish" here and it is the bug. Write
 the reasoning at the call site.
 
+**Verified end to end against two genuinely different real builds**, not
+simulated: built and served version `095b8acf85db`, loaded it, then rebuilt as
+`321853545b80` and reloaded the same tab. The browser's own update mechanics
+produced exactly the state this section describes — old worker still active
+and controlling, new one waiting behind it — with no manual registration
+trickery needed. From there: prompt appeared unprompted, `dismiss()` hid it,
+a `visibilitychange` recheck (the doc's own second resurfacing path) brought
+it back while the worker was still waiting, and clicking Reload drove
+`SKIP_WAITING` → `controllerchange` → an actual page reload now controlled by
+the new worker, with the old build's caches deleted and the prompt gone.
+Confirmed nothing related to dismissal ever touches `localStorage` or
+`sessionStorage`.
+
+One implementation note worth recording: the initial "waiting worker found"
+check (on load, via `serviceWorker.ready`) does NOT require
+`navigator.serviceWorker.controller` to be set. The `updatefound` handler's
+statechange listener does require it, because that path fires for every
+install including a page's very first ever registration, and a first install
+has nothing to wait behind. The initial check has no such ambiguity — if
+`reg.waiting` is populated at all, by definition something is already active
+and controlling, so the extra guard would be redundant there rather than
+protective.
+
 ---
 
 ## 5. iOS — differences, not parity

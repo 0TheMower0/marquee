@@ -10,6 +10,7 @@ import {
   InteractivityWarning,
 } from "@/components/shell/interactivity-warning";
 import { ServiceWorkerRegistration } from "@/components/pwa/service-worker-registration";
+import { UpdatePrompt } from "@/components/pwa/update-prompt";
 import { StorageBanner } from "@/components/storage/storage-banner";
 import { MergePrompt } from "@/components/sync/merge-prompt";
 import { RatingsProvider } from "@/lib/ratings";
@@ -99,6 +100,10 @@ export default function RootLayout({
             of them, and registration should not be gated on storage or auth
             state resolving. */}
         <ServiceWorkerRegistration />
+        {/* Fixed-position, non-blocking — see its own doc comment for why
+            dismissal is never persisted. Sits outside every provider for the
+            same reason ServiceWorkerRegistration does. */}
+        <UpdatePrompt />
         {/* Visually hidden until focused — the first Tab stop on any page,
             so a keyboard user can jump past Sidebar/BottomNav straight to
             content instead of tabbing through nav on every single page. */}
