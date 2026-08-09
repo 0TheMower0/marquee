@@ -208,17 +208,54 @@ Two things explicitly rejected:
   ambiguous. It goes to review even when one candidate is a hundred times more
   popular.
 
-### 2.4 Expected ambiguity rate — a hypothesis, not a claim
+### 2.4 Ambiguity rate — MEASURED against live TMDB, and the hypothesis was pessimistic
 
-Letterboxd's data is TMDB-sourced, so its title strings should match TMDB's
-closely and most rows should land `confident` despite having no id. Ambiguity
-should concentrate in foreign-language films (original vs. English title),
-re-releases, and shared title+year.
+The original hypothesis was that Letterboxd rows would mostly land `confident`
+despite having no id, with ambiguity concentrating in foreign-language films,
+re-releases and shared title+year. It has now been measured rather than
+asserted, and the specific worry was wrong: **those cases resolved cleanly.**
 
-That is a hypothesis. It gets **measured against a real export** before this
-step is called done, not asserted. If Letterboxd ambiguity turns out to be 30%
-rather than 5%, the review queue's ergonomics matter far more than this
-document assumes and the design should be revisited.
+Run against live TMDB with a deliberately adversarial 50-film set — five
+remake pairs sharing a title (Dune, Oldboy, Solaris, Suspiria, The Thing,
+True Grit), an article collision (Heat / The Heat), accented titles (Amélie,
+Y Tu Mamá También), and a typographic edge case (8½):
+
+| | |
+|---|---|
+| Letterboxd, title+year only | **48/50 confident (96%)** |
+| IMDb, by `Const` | **15/15 exact** |
+| Trakt VIP, incl. episode rows | **5/5** |
+| **Confident matches that were WRONG** | **0** |
+
+Verified by TMDB **id and year**, not by name — "Dune → Dune" proves nothing.
+Dune resolved to 841 (1984) and 438631 (2021) correctly; Heat to 949 and
+The Heat to 136795. The article-collision containment described in §2.2, which
+had only ever been tested synthetically, held on real data.
+
+The two rows that did NOT reach `confident` were both the rule working:
+
+- **Aftersun (2022)** — TMDB genuinely holds *two* entries with that exact
+  title and year (965150 and 969829), both scoring 100. A real duplicate in
+  the upstream catalogue, and exactly what §2.3's uniqueness requirement
+  exists for.
+- **8½ (1963)** — TMDB's own search does not return Fellini's film for that
+  query at all (it returns *Kaiju No. 8*, *Exit 8*). Not a normalization
+  failure on our side: the top candidate scored 10 with "title barely
+  matches", so the queue shows an honestly bad list rather than a confident
+  wrong answer.
+
+**One caveat, stated plainly.** The fixture's years were correct because the
+fixture was generated rather than exported. A real Letterboxd export shares
+that property — its years come from TMDB, which is what we match against — so
+the result should carry over. But this was **not** tested against a
+hand-edited or third-party-generated file, where years could be wrong or
+missing, and §2.3's rules would then push far more rows into review by design.
+
+**Review queue at volume**: a 37-row queue cleared entirely by keyboard at
+**~13ms per decision** (measured with a `MutationObserver` on the real DOM
+update, which is what a user actually waits for). Ranking put the correct
+answer at `[1]` throughout. It is usable at this scale; nothing here tests
+3,000 rows.
 
 ---
 

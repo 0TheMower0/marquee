@@ -3296,15 +3296,139 @@ not erode.
         Godfather being promoted `watchlist -> watched` while KEEPING its
         local score over the imported one.
       - 161 import tests; 641 across the suite.
-      - **Not yet done**: no `docs/` note on Trakt's format, and the importer
-        has been exercised only against mock mode — a run against real TMDB
-        data (where titles are messier and the ambiguity rate is the open
-        question §2.4 flags) is still owed.
-- [ ] **Step 2** — Trakt and TV Time importers, after verifying their formats
-      the same way. Trakt has no single canonical CSV: community tools emit a
-      configurable id column (`imdb`/`tmdb`/`tvdb`/`trakt`), so it needs a
-      column-mapping step.
-- [ ] **Step 3** — New-episode notifications.
+- [x] **Step 2** — Routing import commits through the sync seam, and inverting
+      the guard that let the bug ship.
+      - **The bug**: `commit.ts` wrote straight to `trackingStore` /
+        `ratingsStore` / `watchLogStore` and never called
+        `lib/sync/record.ts`. For a signed-in user a 3,000-row import landed
+        on ONE device and **silently never reached any other**. Nothing
+        failed — the local write succeeded, the UI was correct, and
+        `commit.test.ts` passed in full because it installs an in-memory
+        driver and mounts no sync user, so there was no outbox for anything
+        to be missing FROM. Found by noticing an empty outbox while cleaning
+        up test data, not by any test.
+      - `commitRow` now calls the recorders AFTER each successful local
+        write — never before, per `record.ts`'s rule that queuing a write
+        that failed locally would upload state the device does not have.
+      - **`commit-sync.test.ts` installs a REAL signed-in user and asserts on
+        REAL outbox contents.** Mocking `record.ts` and asserting it was
+        called would be weaker: it passes even if the recorder no-ops.
+      - **The guard is INVERTED, and that is the part worth keeping.** The
+        bug shipped because adding a local write that skipped the seam
+        required NO action to go wrong — silence was the bug, and every other
+        test checks a write kind someone remembered to think about, which is
+        exactly the population a forgotten one is not in. So the guard
+        asserts COMPLETENESS: every key `commitRow` returns must appear in
+        `SYNC_TABLES_BY_WRITE_KIND`. Adding a write kind now FAILS a test
+        until its outbox table is written down — or until "this one does not
+        sync" is written down deliberately as `[]`. Default outcome flips
+        from silent-wrong to loud-unfinished.
+      - Both halves were proved by negative control: removing
+        `recordTitleWrite` failed two tests with "commitRow reported a title
+        write but queued no tracked_titles row".
+- [x] **Step 3** — Episode-level import, review-queue grouping, and Trakt.
+      Built in that order deliberately: episode import first as its own step
+      (it also unblocks the IMDb `tvEpisode` rows Step 1 counted as
+      `unsupported`), then the grouping so Trakt would arrive into a queue
+      that could already display it, then Trakt on top.
+      - **Merging imported episodes is a per-season UNION** via `addRange`.
+        `removeRange` is not imported at all, so "an import never subtracts"
+        is structural rather than a rule to remember. Union is monotonic, so
+        the never-demote guarantee holds by construction.
+      - **The one case where a union would DEMOTE, and it is subtle.** A show
+        marked watched at the TITLE level carries `status: "watched"` with
+        EMPTY ranges — the user asserting they saw the whole show. Merging 40
+        imported episodes into a 62-episode show grows the ranges while
+        *lowering* apparent progress, silently discarding 22 the user had
+        already claimed. A demotion wearing the costume of an addition. So
+        those shows are skipped by `shouldMergeRanges` — but **their watch
+        EVENTS are still written**, because the log is append-only and cannot
+        demote anything. The split follows the line this codebase already
+        draws: progress answers *how much*, the log answers *when*.
+      - **Episode rows promote to `watching`, never `watched`.** Whether N
+        imported episodes complete a show is a question only season counts
+        answer, and `deriveStatus` correctly declines to guess without them.
+      - **`instantToLocalMoment` is a SECOND date function, and rejects bare
+        dates.** `toDayKey` validates-and-never-converts because IMDb and
+        Letterboxd write calendar dates; Trakt writes an instant, whose
+        leading date portion is the **UTC** day — systematically tomorrow for
+        evening viewing in the Americas, the exact bug
+        `lib/watchlog/types.ts` exists to prevent, arriving through a
+        different door. Each function is wrong where the other belongs, so
+        rejecting the wrong input makes misuse impossible rather than
+        documented. Trakt's timestamp also yields a REAL `m` (minute of day),
+        which no earlier source could supply.
+      - **A review unit is a DEDUP GROUP — there is no episode special
+        case.** `resolveRows` already groups by `dedupKey` and gives every
+        row in a group the same candidates and bucket, so rows that resolved
+        together are by construction the rows one decision covers. A film
+        matched once is a unit of 1; rewatched three times, a unit of 3; a
+        show's 62 episodes, a unit of 62. **Fewer decisions, not a faster
+        interface** — still one unit at a time, still keyboard-first, no
+        table. This puts a hard requirement on any parser emitting episode
+        rows: `title`/`year`/`imdbId` must describe the SHOW, or 62 episodes
+        become 62 decisions. Pinned by a test.
+      - **Trakt is two unrelated formats** (design doc §11). The VIP export
+        carries `tmdb_id` directly; community-tool exports name their id
+        column after its type and have no `year` at all, so an export with an
+        unresolvable id column AND no year is flagged BEFORE resolution —
+        learning that after a multi-minute resolve is the worst moment.
+        `collected_at` imports as *watchlist*: it means the user OWNS
+        something, and mapping a shelf to a viewing history would invent one.
+      - **`rating` vs `trakt_rating` is protected by construction, and the
+        test was written BEFORE the parser.** `readTraktUserRating` is the
+        only place any rating column is read; the community columns are
+        listed as DATA (`TRAKT_COMMUNITY_RATING_COLUMNS`) so a test can sweep
+        them rather than trusting a comment. There is deliberately **no
+        fallback** — the titles with an empty `rating` are exactly the ones
+        the user chose NOT to rate, so `?? trakt_rating` would assign crowd
+        scores to precisely the wrong set while reading as defensive coding.
+        Negative control: adding that fallback failed two tests, one naming
+        the column.
+      - **Two bugs live testing found that 700+ tests did not**, both hiding
+        behind plausible output. (1) Episode COMMIT shipped without updating
+        the classifier, so episode rows were still bucketed `unsupported` and
+        never reached it. (2) Worse — `resolve.ts` held its OWN copy of "can
+        we import this", so fixing the classifier left it behind and episode
+        rows were skipped before any lookup, falling out `unmatched` with
+        zero candidates for a show whose IMDb id resolved perfectly. The
+        endpoint returned 200 and the UI said "No matches found",
+        indistinguishable from a genuine miss. Caught by querying
+        `/api/content/find/tt0903747` by hand and watching it answer while
+        the resolver claimed nothing. Fixed by sharing ONE exported
+        predicate — duplicated knowledge was the actual bug, and patching the
+        second copy would have left it primed to drift again.
+      - Also: an `"episode"` media-type hint now implies `"tv"` in the
+        scorer. Left as its own value it earned neither the agreement bonus
+        nor the conflict penalty, so a film could match an episode row
+        unpenalised.
+      - **Measured against LIVE TMDB** (design doc §2.4, whose hypothesis was
+        pessimistic): Letterboxd **48/50 confident** on a deliberately
+        adversarial set (five remake pairs, an article collision, accented
+        titles), IMDb **15/15 exact**, Trakt **5/5** including episode rows,
+        and — the number that matters — **zero wrong matches reached
+        `confident`**, verified by TMDB id and year rather than by name. The
+        review queue cleared 37 rows by keyboard at **~13ms per decision**.
+        Caveat stated honestly: the fixture's years were correct because it
+        was generated. A real Letterboxd export shares that property (its
+        years are TMDB-sourced), but this was NOT tested against a
+        hand-edited file, where §2.3's rules would push far more rows into
+        review by design.
+      - **A debugging lesson worth keeping**, and the third instance of it in
+        this project: three plausible performance hypotheses (per-keystroke
+        `saveJob` serialization, `next/image` churn, main-thread blocking)
+        were each killed by measurement — 0.37ms, 8 `data:` URIs, zero long
+        tasks. The apparent 4.5s-per-decision was an artifact of the CDP
+        measurement harness, not the app. Measuring what the USER experiences (a
+        `MutationObserver` on the real DOM update) gave the answer
+        immediately. Same shape as Step 5c's "the diagnostic that cannot be
+        clicked".
+      - 252 import tests; 732 across the suite.
+      - **Not yet done**: `traktTmdbId` is written and tested but unwired, so
+        a VIP export still spends an IMDb lookup it does not need; and no
+        run has been done against a hand-edited export with wrong years.
+- [ ] **Step 4** — TV Time importer, after verifying its format the same way.
+- [ ] **Step 5** — New-episode notifications.
 
 ---
 
