@@ -756,6 +756,39 @@ diff size. Inference happens to be correct today but would silently
 misclassify a future operation, and this field is unrecoverable once written
 wrong.
 
+#### ⚠️ A bulk event's `m` records when you CLICKED, not when you watched
+
+The note above anticipated half of the problem. The half it missed, found in
+Phase 8 Step 1 by looking at real data before designing against it: **every
+event in a bulk batch carries the same `m`** — the minute of the tap. Thirteen
+episodes at 04:43 is one tap at 04:43.
+
+That corrupts time-of-day and weekday aggregation, not just "biggest session".
+Measured on a real 39-event log in which 33 events were a single "mark season
+watched":
+
+| | says |
+|---|---|
+| including bulk | "you watch most at **4am**" — 35 events in that hour |
+| excluding bulk | that hour has **2** |
+
+`byHourOfDay` and `byWeekday` in `queries.ts` both counted bulk events from
+Phase 5 until Phase 8 Step 1. `byWeekday` skewed harder — it counted
+`events.length` outright, so one 33-episode season mark added 33 to a single
+weekday. Two shipped features were quietly affected: the stats dashboard's
+hour histogram, and the **time-of-day badges**, where one 4am bulk mark could
+earn "Night Owl". (Badges are ledgered and sticky, so the fix revokes nothing
+already earned — only future evaluations change.)
+
+Both now filter `b === 1`, and the filtering lives in `queries.ts` rather than
+in each caller: there is no legitimate consumer of "what hour did you press
+the button", so an opt-in flag would only be a way to reintroduce the bug.
+
+One deliberate asymmetry: `byWeekday` still counts **untimed imports** while
+`byHourOfDay` does not. A Letterboxd row has no clock time but a real calendar
+date, so it knows exactly which weekday it was; discarding it would throw away
+information we actually have.
+
 ### Log writes never block or fail a tracking write
 
 Appended only *after* the tracking write succeeds (never log what didn't
@@ -1491,7 +1524,7 @@ wrong, verify what the row you're writing actually contains first.
 | 5 *(done)* | XP, levels, streaks, badges, stats dashboard; PWA manifest + service worker |
 | 6 *(done)* | API rate limiting, Supabase accounts + sync, spoiler-safe comments, shared lists — design in `docs/phase-6-sync-design.md` |
 | **7** *(done)* | CSV importers (IMDb, Letterboxd, Trakt; TV Time deliberately skipped), the new-episode feed, new-episode push notifications — designs in `docs/phase-7-import-design.md` and `docs/phase-7-notifications-design.md` |
-| **8** *(current)* | Year in Review |
+| **8** *(current)* | Year in Review — rolling 12-month deck with an on-device share image |
 
 **Do not build ahead of the current phase.** Architect so later phases slot in;
 do not implement them early.
@@ -3810,6 +3843,95 @@ not erode.
         exercised; the network hop itself is not. **Still owed**: a real
         subscribe → cron → device round trip, and the iOS
         install-then-subscribe path on actual hardware.
+
+**Phase 7 is complete.**
+
+## Phase 8 status
+
+- [x] **Step 1** — Year in Review (`lib/yir/`, `components/yir/`,
+      `app/profile/year/`). A shareable summary of someone's viewing year,
+      built on the watch-date log that has existed for this since Phase 5.
+      - **A ROLLING 12 MONTHS, NOT A CALENDAR YEAR**, and the label says so in
+        three places — the page heading, the metadata title, and the opener
+        card with the real date range. Being mistaken for a calendar-year
+        summary is the one misreading that would make every number wrong.
+        Reasons, in order: a feature that is empty for four months is one
+        nobody builds a habit around; December-Wrapped works because Spotify
+        already has your whole year, whereas a new tracker's year-one users
+        would open a near-empty card and conclude it was broken; and the log
+        has no backfill, so a January boundary would routinely describe a
+        period that mostly predates the data.
+      - **The design was driven by looking at real data first**, and it
+        changed the plan. See the bulk-flag section above for the measurement:
+        85% of a real log was a single click, and the rhythm card — the one
+        the `m` field exists for — would have confidently reported "you're a
+        4am watcher" off the back of it. `computeRhythm` therefore counts only
+        timed, NON-BULK events and returns null below a sample floor, so the
+        card is **absent rather than wrong**. Verified live: on the real log it
+        does not render.
+      - **Cards are selected by data sufficiency, not a fixed template.** The
+        brief asked for a thin year to feel charming rather than empty, and
+        the answer is not a special thin layout — it is that the deck is
+        assembled from whatever the data supports. This works because of an
+        asymmetry visible in real data: **distribution stats degrade
+        gracefully and volume stats do not.** "Across 6 decades, 1975 to 2024"
+        is charming at n=12; "39 things watched" is not.
+      - **The headline ladder has a rung that leans INTO thinness.** A first
+        draft fell through every branch for the most common year-one user
+        (three films, three genres, three decades → no persona, no critic
+        verdict, no top show) and produced the blandest possible line. The fix
+        was not a lower threshold but a different framing: "Three decades in
+        3 titles" is a better line *because* the count is small. Caught by a
+        test written for that exact case.
+      - **Shareable as an IMAGE, not a public link**, and the reason is
+        architectural rather than aesthetic. A link would make this the first
+        feature to upload personal data to a server, would need an account
+        (most users are signed out), a new public-read surface with its own
+        RLS, and would break the "works offline from local data" requirement —
+        while creating a URL that outlives the user's intent. An image is
+        rendered on-device and leaves only if handed to someone, which gives
+        the strongest privacy guarantee available: **what you see is exactly
+        what you share.** 1080×1350 (4:5) rather than 9:16, because story
+        ratios get centre-cropped in chat previews and the brief was group
+        chats. Drawn with the canvas 2D API, not html2canvas — same
+        anti-dependency reasoning as the icons and charts.
+      - **Privacy is structural, not filtered.** `RatingEntry.note` is never
+        read (a test asserts no note text survives into the computed output),
+        and `lib/lists` is **never imported at all** — not "filtered by
+        visibility", simply not touched, which is a guarantee verifiable by
+        grep rather than by reasoning about a filter.
+      - **The importer case is handled by provenance, not by guessing.** Live
+        events always carry `m`; IMDb and Letterboxd imports never do (only
+        Trakt supplies a real time), so a missing `m` reliably means "time
+        unknown". When untimed events dominate, the tally card says so
+        outright — "most of this came from imported history" — because a
+        diary entry is something you watched but an import is not a viewing
+        year, and the card must not dress one up as the other.
+      - **Hours are labelled as estimates and suppressed when they aren't
+        worth stating.** Movie runtime is null on pre-Phase-5 records and
+        per-episode runtime is stored nowhere, so `runtimeConfidence` tracks
+        how much of the figure rests on a real measurement; below 20% the line
+        is dropped rather than shown with false precision. A coarse
+        whole-show mark contributes no runtime at all — we genuinely do not
+        know how many episodes it stood for.
+      - Works offline and signed out: everything is computed from local
+        storage, and `/profile/year` builds **static**.
+      - 31 tests in `lib/yir/yir.test.ts` (windowing, the bulk problem, the
+        thin year, the empty case, the importer case, join failures, the
+        privacy assertion) plus 3 new watchlog tests pinning the bulk fix —
+        851 across the suite.
+      - **Verified live against real local data at 375px**: 7 cards, no
+        horizontal scroll, no overflowing elements; the rhythm card correctly
+        absent; the critic card correctly scoped to the 3 titles both watched
+        in range and rated. The share image was rendered and **looked at** —
+        which is how two flaws were found that no test would have caught: raw
+        ISO dates where the on-screen card says "Aug 12, 2025", and a dead
+        band between the stats and the critic line whenever the stat list was
+        short. Both fixed.
+      - **Not verified**: the OS share sheet itself. `canShare({files})` is
+        true on this machine, so invoking it would open a modal that hangs the
+        automation session. The render, the blob, the dimensions and the
+        download fallback are all exercised; the hand-off to the OS is not.
 
 ---
 

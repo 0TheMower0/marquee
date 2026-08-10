@@ -454,6 +454,23 @@ describe("byHourOfDay", () => {
     const hours = byHourOfDay([[{ k: WATCH_KIND.MOVIE, t: "movie:1" }]]);
     expect(hours.every((count) => count === 0)).toBe(true);
   });
+
+  it("EXCLUDES bulk events — they record when you clicked, not when you watched", () => {
+    // Measured on real data before this was fixed: a 39-event log where 33
+    // events were one "mark season watched" reported "you watch most at 4am"
+    // off the back of a single tap. Every event in a bulk batch shares the
+    // minute of the click.
+    const hours = byHourOfDay([
+      [
+        { k: WATCH_KIND.EPISODE, t: "tv:1", s: 1, e: 1, m: 283, b: 1 },
+        { k: WATCH_KIND.EPISODE, t: "tv:1", s: 1, e: 2, m: 283, b: 1 },
+        { k: WATCH_KIND.EPISODE, t: "tv:1", s: 1, e: 3, m: 283, b: 1 },
+        { k: WATCH_KIND.MOVIE, t: "movie:1", m: 283 },
+      ],
+    ]);
+    expect(hours[4]).toBe(1);
+    expect(hours.reduce((sum, count) => sum + count, 0)).toBe(1);
+  });
 });
 
 describe("byWeekday", () => {
@@ -474,6 +491,31 @@ describe("byWeekday", () => {
   it("ignores invalid day keys", () => {
     const weekdays = byWeekday([["nope", [{ k: WATCH_KIND.MOVIE, t: "movie:1" }]]]);
     expect(weekdays.every((count) => count === 0)).toBe(true);
+  });
+
+  it("EXCLUDES bulk events, which skewed this harder than the hour histogram", () => {
+    // This one counted `events.length` outright, so one 33-episode season
+    // mark added 33 to a single weekday — one Friday afternoon reading as the
+    // heaviest viewing day of someone's year.
+    const weekdays = byWeekday([
+      [
+        "2026-07-30", // Thursday
+        [
+          { k: WATCH_KIND.EPISODE, t: "tv:1", s: 1, e: 1, m: 283, b: 1 },
+          { k: WATCH_KIND.EPISODE, t: "tv:1", s: 1, e: 2, m: 283, b: 1 },
+          { k: WATCH_KIND.MOVIE, t: "movie:1", m: 600 },
+        ],
+      ],
+    ]);
+    expect(weekdays[4]).toBe(1);
+  });
+
+  it("DOES count untimed imports, unlike byHourOfDay", () => {
+    // A Letterboxd row has no clock time but a real calendar date, so it
+    // knows exactly which weekday it was. Excluding it would throw away
+    // information we actually have.
+    const weekdays = byWeekday([["2026-08-02", [{ k: WATCH_KIND.MOVIE, t: "movie:1" }]]]);
+    expect(weekdays[0]).toBe(1); // Sunday
   });
 });
 

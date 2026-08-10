@@ -22,9 +22,17 @@ export function ProfileView() {
             signed in or not.
           </p>
         </div>
-        <Button href="/profile/stats" variant="outline" size="sm">
-          Full stats
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {/* Phase 8 Step 1. Listed before "Full stats" because it is the
+              narrative view and the one worth opening unprompted; stats is
+              the reference view you go looking for. */}
+          <Button href="/profile/year" variant="primary" size="sm">
+            Last 12 months
+          </Button>
+          <Button href="/profile/stats" variant="outline" size="sm">
+            Full stats
+          </Button>
+        </div>
       </div>
 
       <XpSummary />

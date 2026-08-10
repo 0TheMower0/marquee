@@ -76,6 +76,11 @@ const CACHEABLE_ROUTES = [
   "/schedule",
   "/import",
   "/profile/stats",
+  // Phase 8 Step 1. Static, and identical for every visitor — the entire
+  // deck is computed client-side from this browser's own storage, so there
+  // is no user data in the HTML. Genuinely useful offline, which is the
+  // point of caching it rather than merely the permission to.
+  "/profile/year",
   "/forgot-password",
   "/offline",
 ];

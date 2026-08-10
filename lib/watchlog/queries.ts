@@ -133,16 +133,56 @@ export function totals(days: Iterable<WatchLogDay>): WatchTotals {
 }
 
 /**
+ * Whether an event says anything trustworthy about WHEN the user watched.
+ *
+ * ============================================================================
+ * BULK EVENTS RECORD WHEN YOU CLICKED, NOT WHEN YOU WATCHED
+ * ============================================================================
+ * `b: 1` marks an event that came from a bulk action — "mark season watched",
+ * "binge to here". Every event in such a batch carries the SAME `m`: the
+ * minute of the click. Thirteen episodes at 04:43 is one tap at 04:43, not
+ * thirteen viewings at 04:43.
+ *
+ * This was measured on real data before being fixed, and the skew is not
+ * subtle. In a 39-event log, 33 events were a single "mark season watched":
+ *
+ *   including bulk   "you watch most at 4am" — 35 events in that hour
+ *   excluding bulk   that hour has 2
+ *
+ * `types.ts` already anticipated half of this — it says Year in Review "can
+ * decline to call it the user's biggest session". The half it did not
+ * anticipate is that the same corruption applies to TIME-OF-DAY and WEEKDAY
+ * aggregation, which both silently counted bulk events from Phase 5 until
+ * Phase 8 Step 1. The stats dashboard's hour histogram and the time-of-day
+ * BADGES were both affected: a user who bulk-marked a season at 4am could
+ * earn "Night Owl" for one click. (Badges are ledgered and sticky, so nothing
+ * already earned is revoked by this fix — only future evaluations change.)
+ *
+ * Filtering happens HERE rather than in each caller on purpose: there is no
+ * legitimate consumer of "what hour did you press the button", so an opt-in
+ * flag would only be a way to reintroduce the bug.
+ */
+function describesRealViewingTime(event: WatchEvent): boolean {
+  // `m` absent means the time is genuinely unknown — an IMDb or Letterboxd
+  // import, which records a calendar date and no clock time. Skipped rather
+  // than defaulted to midnight, which would invent a spike at 00:00.
+  if (event.m === undefined) return false;
+  return event.b !== 1;
+}
+
+/**
  * Events bucketed by local hour (0–23), for "you watch most at 10pm".
- * Events with no recorded time (`m` absent — a Phase 7 import, say) are
- * skipped rather than defaulting to midnight, which would invent a spike.
+ *
+ * Counts only events that describe a real viewing time — see
+ * `describesRealViewingTime` for why bulk marks and untimed imports are both
+ * excluded, and for the measurement that prompted it.
  */
 export function byHourOfDay(days: Iterable<WatchLogDay>): number[] {
   const hours = new Array<number>(24).fill(0);
   for (const day of days) {
     for (const event of day) {
-      if (event.m === undefined) continue;
-      hours[Math.floor(event.m / 60)] += 1;
+      if (!describesRealViewingTime(event)) continue;
+      hours[Math.floor(event.m! / 60)] += 1;
     }
   }
   return hours;
@@ -152,6 +192,16 @@ export function byHourOfDay(days: Iterable<WatchLogDay>): number[] {
  * Events bucketed by weekday, Sunday = 0, for "you watch most on Sundays".
  * Takes day keys paired with their events, since the weekday comes from the
  * date, not the event.
+ *
+ * Bulk events are excluded here too, and this one skewed HARDER than the hour
+ * histogram did: it counted `events.length` outright, so a single 33-episode
+ * season mark added 33 to one weekday. That is one Friday afternoon reading
+ * as the heaviest viewing day of someone's year.
+ *
+ * Untimed imports ARE counted here, unlike in `byHourOfDay` — and the
+ * asymmetry is deliberate. A Letterboxd row has no clock time but does have a
+ * real calendar date, so it knows exactly which weekday it was. Excluding it
+ * would discard information we actually have.
  */
 export function byWeekday(entries: Iterable<[DayKey, WatchLogDay]>): number[] {
   const weekdays = new Array<number>(7).fill(0);
@@ -160,7 +210,7 @@ export function byWeekday(entries: Iterable<[DayKey, WatchLogDay]>): number[] {
     const [year, month, date] = day.split("-").map(Number);
     // Local construction, same reason as everywhere else in this package.
     const weekday = new Date(year, month - 1, date).getDay();
-    weekdays[weekday] += events.length;
+    weekdays[weekday] += events.filter((event) => event.b !== 1).length;
   }
   return weekdays;
 }
