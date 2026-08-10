@@ -300,3 +300,26 @@ export function XIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** Notifications on — the per-show follow toggle and the setup card. */
+export function BellIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M18 8a6 6 0 1 0-12 0c0 6-3 7-3 7h18s-3-1-3-7Z" />
+      <path d="M13.7 20a2 2 0 0 1-3.4 0" />
+    </Icon>
+  );
+}
+
+/** Notifications off. Deliberately the same bell with a slash rather than a
+ *  different glyph — the pair has to read as one control in two states. */
+export function BellOffIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8.7 3.7A6 6 0 0 1 18 8c0 2.3.4 4 1 5.2" />
+      <path d="M16.5 16.5H3s3-1 3-7a6 6 0 0 1 .8-3" />
+      <path d="M13.7 20a2 2 0 0 1-3.4 0" />
+      <path d="m3 2 18 18" />
+    </Icon>
+  );
+}

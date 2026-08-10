@@ -141,4 +141,23 @@ export const RATE_LIMITS = {
    * and by the server-side concurrency cap inside `resolveRows`.
    */
   importResolve: { name: "import-resolve", limit: 30, windowSeconds: 60 },
+
+  /**
+   * Phase 7 Step 5: saving a push subscription, editing prefs, syncing a
+   * timezone.
+   *
+   * Tight because none of these is a browsing action — a real user edits
+   * quiet hours once and subscribes once per device. The timezone sync fires
+   * automatically on mount, but only when the zone actually CHANGED, so it is
+   * rare rather than per-visit.
+   */
+  notifications: { name: "notifications", limit: 15, windowSeconds: 60 },
+
+  /**
+   * Follow/unfollow a show for notifications. Same low-risk toggle shape as
+   * `listFollowers` and `commentLikes`, and needs comparable headroom: someone
+   * setting this up for the first time reasonably works down their library
+   * turning several shows on in a row.
+   */
+  notificationFollows: { name: "notification-follows", limit: 60, windowSeconds: 60 },
 } as const satisfies Record<string, RateLimitRule>;

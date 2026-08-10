@@ -102,6 +102,11 @@ const NEVER_CACHED_ROUTES = [
   // non-navigation static assets, this belongs on the cacheable side of
   // THAT branch, not this one.
   "/manifest.webmanifest",
+  // Phase 7 Step 5. Reads the session and renders the signed-in user's own
+  // follow list, device count and quiet hours — as account-scoped as
+  // /profile. This test caught it unprompted the moment the route was added,
+  // which is the whole point of the inversion.
+  "/notifications",
   // Renders the signed-in AccountCard, same as /account.
   "/profile",
   "/signin",

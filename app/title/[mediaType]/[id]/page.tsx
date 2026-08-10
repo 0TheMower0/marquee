@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, unstable_rethrow } from "next/navigation";
 import { Suspense } from "react";
 
 import { ContentErrorState } from "@/components/content/content-error-state";
 import { CommentSection, CommentSectionSkeleton } from "@/components/comments/comment-section";
+import { FollowShowToggle } from "@/components/notifications/follow-show-toggle";
 import { BackdropImage } from "@/components/title/backdrop-image";
 import { CastCrewSection } from "@/components/title/cast-crew-section";
 import { MyRatingChip } from "@/components/title/my-rating-chip";
@@ -24,9 +25,11 @@ import {
   TabsPanel,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import { getAccount } from "@/lib/auth";
 import { getContentProvider } from "@/lib/content";
 import { ContentError, type ContentErrorKind } from "@/lib/content/errors";
 import { titleScope } from "@/lib/comments";
+import { isFollowingShow } from "@/lib/notifications/queries";
 import type {
   ExternalRating,
   MediaType,
@@ -111,6 +114,44 @@ export async function generateMetadata({
   } catch {
     return { title: "Title" };
   }
+}
+
+/**
+ * The per-show notification opt-in (Phase 7 Step 5).
+ *
+ * Wrapped in try/catch and rendered as nothing on failure, for the same
+ * reason `RatingsSection` below is: a secondary source must never take the
+ * page down. Step 6a learned that the hard way when an uncaught
+ * `CommentSection` fetch replaced an entire title page with the generic error
+ * screen.
+ *
+ * Renders nothing at all when notifications are unconfigured — the query
+ * returns false for both signed-out and unconfigured, and `signedIn` below
+ * distinguishes them.
+ */
+async function FollowShowSection({ showId }: { showId: string }) {
+  let following = false;
+  let signedIn = false;
+
+  try {
+    const [isFollowing, account] = await Promise.all([
+      isFollowingShow(showId),
+      getAccount(),
+    ]);
+    following = isFollowing;
+    signedIn = account !== null;
+  } catch (error) {
+    // Re-throws Next's own internal control-flow errors (dynamic-usage,
+    // notFound, redirect) instead of swallowing them as failures — see the
+    // fuller note in app/notifications/page.tsx.
+    unstable_rethrow(error);
+    console.error("[marquee] follow-show state failed to load", error);
+    return null;
+  }
+
+  return (
+    <FollowShowToggle showId={showId} initialFollowing={following} signedIn={signedIn} />
+  );
 }
 
 /**
@@ -344,6 +385,18 @@ export default async function TitleDetailPage({
         <section aria-label="Track this title" className="mt-8">
           <TrackingActions title={title} />
         </section>
+
+        {/* Phase 7 Step 5, TV only — a movie has no "next episode" to be
+            notified about. Its own Suspense boundary because it reads the
+            session and one table, and must not delay the tracking controls
+            above it, which need no server at all. */}
+        {mediaType === "tv" && (
+          <div className="mt-4">
+            <Suspense fallback={null}>
+              <FollowShowSection showId={title.id} />
+            </Suspense>
+          </div>
+        )}
 
         {/* Phase 4 Step 5. Gates itself on "watched" internally and renders
             nothing otherwise — placed right after TrackingActions so rating

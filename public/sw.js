@@ -269,6 +269,70 @@ self.addEventListener("message", (event) => {
 });
 
 /* ---------------------------------------------------------------------------
+ * Push — Phase 7 Step 5
+ *
+ * Deliberately additive and self-contained: nothing below touches the caches
+ * or the fetch handler above, and nothing above depends on this. A push
+ * handler was NOT built as part of Phase 5 Step 6 precisely so that step could
+ * be judged on its own caching behaviour.
+ * ------------------------------------------------------------------------ */
+
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+
+  let payload;
+  try {
+    payload = event.data.json();
+  } catch {
+    // A push we can't parse is a bug on our side, not something to surface to
+    // the user. `userVisibleOnly: true` means browsers may show a generic
+    // "site updated in the background" notice if we show nothing at all —
+    // accepted, and still better than rendering "[object Object]".
+    return;
+  }
+
+  const title = typeof payload.title === "string" ? payload.title : "Marquee";
+  const options = {
+    body: typeof payload.body === "string" ? payload.body : "",
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
+    // Collapses repeats for the SAME show in the OS tray rather than stacking
+    // a column of them — the anti-noise rule, applied at the last possible
+    // layer as well as at detection.
+    tag: typeof payload.tag === "string" ? payload.tag : "marquee",
+    data: { url: typeof payload.url === "string" ? payload.url : "/" },
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = event.notification.data?.url || "/";
+
+  event.waitUntil(
+    (async () => {
+      const clients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+
+      // Prefer focusing an existing tab over opening a duplicate. Someone who
+      // already has Marquee open should not end up with two.
+      for (const client of clients) {
+        if ("focus" in client) {
+          await client.focus();
+          if ("navigate" in client) await client.navigate(target).catch(() => {});
+          return;
+        }
+      }
+
+      await self.clients.openWindow(target);
+    })(),
+  );
+});
+
+/* ---------------------------------------------------------------------------
  * Fetch
  * ------------------------------------------------------------------------ */
 
