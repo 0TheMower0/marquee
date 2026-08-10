@@ -1,23 +1,36 @@
-# Supabase — schema, RLS, and the adversarial test
+# Supabase — schema, RLS, and the adversarial tests
 
-Phase 6 Steps 3, 4, 5, and 6a. The sync design and reasoning live in
-[`../docs/phase-6-sync-design.md`](../docs/phase-6-sync-design.md); the
-comments design lives inline in `20260809000001_comments.sql`'s own header
-comment.
+Phase 6 Steps 3, 4, 5, 6a and 6b, plus Phase 7 Step 5. Design docs:
+[`../docs/phase-6-sync-design.md`](../docs/phase-6-sync-design.md) for sync,
+[`../docs/phase-7-notifications-design.md`](../docs/phase-7-notifications-design.md)
+for notifications. The comments and lists designs live inline in their own
+migrations' header comments.
 
 ```
 supabase/
   migrations/
-    20260801000001_initial_schema.sql      tables + RLS + policies, one transaction
-    20260806000001_usernames.sql           profiles.username + availability RPC
-    20260807000001_sync_conflict_rules.sql LWW / LEAST / GREATEST triggers
-    20260809000001_comments.sql            comments, likes, reports + spoiler gating
+    20260801000001_initial_schema.sql       tables + RLS + policies, one transaction
+    20260806000001_usernames.sql            profiles.username + availability RPC
+    20260807000001_sync_conflict_rules.sql  LWW / LEAST / GREATEST triggers
+    20260809000001_comments.sql             comments, likes, reports + spoiler gating
+    20260810000001_lists.sql                lists, collaborators, items, followers
+    20260810000002_lists_invite_visibility_fix.sql  an invitee must see the list
+    20260811000001_notifications.sql        push subs, follows, prefs, snapshots, queue
   tests/
     00_local_supabase_shim.sql          auth schema/roles, LOCAL ONLY
     01_rls_adversarial.sql              the RLS attack, safe to run anywhere
     02_sync_conflict_rules.sql          the conflict-rule attack, safe anywhere
     03_comments_adversarial.sql         the spoiler-gating attack, safe anywhere
+    04_lists_adversarial.sql            the sharing/agreement attack, safe anywhere
+    05_notifications_adversarial.sql    the push/queue attack, safe anywhere
 ```
+
+> ⚠️ **`20260811000001` introduces the first `USING (false)` table in this
+> schema** (`show_snapshots`) and the first code path that will need
+> `SUPABASE_SERVICE_ROLE_KEY`. That table is world data owned by no user and is
+> deliberately unreachable through PostgREST by any role — the notifier reaches
+> it via BYPASSRLS and nothing else reaches it at all. `USING (false)` is the
+> whole policy, not a stub to be filled in later.
 
 > ⚠️ **`20260807000001` must be applied before sync is safe to use.** It is not
 > an optimization. Without those triggers every upsert simply overwrites, so a
