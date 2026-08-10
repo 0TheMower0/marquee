@@ -1387,6 +1387,59 @@ write must stop the operation rather than degrade. `restoreSnapshot` is
 additive on purpose: it does not delete records created since the snapshot,
 because an undo that destroys newer work is worse than the bug it fixes.
 
+## ⚠️ The service_role key — total blast radius, one importer
+
+`SUPABASE_SERVICE_ROLE_KEY` carries **BYPASSRLS**. Every policy in every
+migration under `supabase/` is simply **not applied** to a client holding it.
+
+Be precise about what that means, because it is easy to file mentally next to
+the other credentials and it does not belong there. Leaking the TMDB or OMDb
+key costs a quota and a rotation. Leaking this one is **unmediated read and
+write access to every user's library, ratings, private notes, watch history
+and comments**, with no audit trail distinguishing it from legitimate traffic
+and no database-side control able to intervene. It is the single most
+dangerous value in the project.
+
+**Exactly one file may import `lib/supabase/server-env`:**
+
+```
+lib/notifications/server/store.ts     the Phase 7 Step 5 notification cron
+```
+
+It earns that because the cron must read *every* user's follow rows and write
+to *every* user's queue — precisely what own-rows RLS exists to forbid — and
+runs with no `auth.uid()` to act as. Nothing else in the app has that shape;
+everything else uses the user's own JWT and is subject to RLS.
+
+**The guard test is the only thing stopping a second importer.**
+`lib/notifications/service-role-guard.test.ts` enumerates importers and fails
+on any file not in its allowlist. Nothing else prevents it: `server-only`
+stops the key reaching a *browser*, and the typed table allowlist inside
+`store.ts` constrains what *that module* can touch — but neither stops a new
+file importing `server-env` and building its own unconstrained client. Only
+the guard does. It is not a nicety; treat deleting or loosening it as removing
+the containment itself.
+
+Containment is also visible in the code rather than only asserted by the test:
+
+- **The client never escapes.** `client()` in `store.ts` is module-private and
+  is not exported. There is no `getServiceRoleClient()` anywhere. The named
+  operations that module exports ARE the complete inventory of what the
+  notifier can do.
+- **Reachable tables are a typed allowlist.** `writeTable("comments")` does
+  not compile. Neither does `writeTable("watched_episodes")` — that one is
+  read-only-reachable on purpose, because the only legitimate reason to
+  consult watch state is to *suppress* a redundant notification, never to
+  modify anything. Verified by attempting it: TS2345.
+- **No caller-supplied value picks a table or a user.** Every operation
+  hard-codes its own table and takes typed arguments; there is no generic
+  `query(table, filter)` seam for a future caller to widen.
+
+If you need a second privileged path: first check whether the user's own JWT
+would do — it almost always will. If it genuinely cannot, add a named module
+with the same shape (private client, typed allowlist), add it to the guard's
+allowlist with a comment saying why, and expect that entry to be reviewed.
+
 ## Comments — `lib/comments/`
 
 ```
@@ -1435,10 +1488,10 @@ wrong, verify what the row you're writing actually contains first.
 | 2 *(done)* | Search, My Library, watchlist/watched state |
 | 3 *(done)* | Episode-level progress, "Up Next" engine |
 | 4 *(done)* | Rich detail pages with artwork-derived dynamic theming |
-| 5 *(step 6 outstanding)* | XP, levels, streaks, badges, stats dashboard; PWA manifest + service worker |
+| 5 *(done)* | XP, levels, streaks, badges, stats dashboard; PWA manifest + service worker |
 | 6 *(done)* | API rate limiting, Supabase accounts + sync, spoiler-safe comments, shared lists — design in `docs/phase-6-sync-design.md` |
-| **7** *(current)* | CSV importers (IMDb, Letterboxd, Trakt done; TV Time deliberately skipped), the new-episode feed (done), new-episode push notifications (blocked on Phase 5 Step 6) — design in `docs/phase-7-import-design.md` |
-| 8 | Year in Review |
+| **7** *(done)* | CSV importers (IMDb, Letterboxd, Trakt; TV Time deliberately skipped), the new-episode feed, new-episode push notifications — designs in `docs/phase-7-import-design.md` and `docs/phase-7-notifications-design.md` |
+| **8** *(current)* | Year in Review |
 
 **Do not build ahead of the current phase.** Architect so later phases slot in;
 do not implement them early.
@@ -2385,7 +2438,9 @@ range encoding is deliberately NOT preserved server-side).
         access to every user's library, ratings, private notes and history —
         strictly worse than leaking the TMDB or OMDb key, which cost a quota
         and a rotation. It is read only through `lib/supabase/server-env.ts`
-        (`server-only`, lazy read), and no current code path needs it.
+        (`server-only`, lazy read). ⚠️ **No longer unused as of Phase 7
+        Step 5** — see the service-role section below, which supersedes the
+        "no current code path needs it" this line used to end with.
       - **Verified with a sentinel and a POSITIVE CONTROL**, same discipline as
         Phase 4 Step 4. A sentinel value in `SUPABASE_SERVICE_ROLE_KEY`
         appeared **0 times** in `.next/static` *and* 0 times in `.next/server`
@@ -3662,13 +3717,99 @@ not erode.
         profile Phase 7's earlier steps had to deliberately clean test data
         out of — covered instead by the unit tests exercising the identical
         `ScheduleSection` rendering path.
-- [ ] **Step 5** — New-episode PUSH notifications. **Blocked on Phase 5
-      Step 6** (PWA manifest + service worker), which is still outstanding —
-      see the roadmap table. Do not build service-worker infrastructure as a
-      side effect of this step; go finish Step 6 on its own terms first. See
-      the note on sequencing where Phase 5 Step 6 is listed above. Distinct
-      from Step 4b (done): this step is specifically about paging someone
-      while the app is closed, not about what the app shows while open.
+- [x] **Step 5** — New-episode PUSH notifications (`lib/notifications/`,
+      `components/notifications/`, `app/notifications/`,
+      `app/api/cron/notifications/`, one migration). Design in
+      **`docs/phase-7-notifications-design.md`** — read §1 before touching
+      any of it. Unblocked by Phase 5 Step 6, which shipped the service
+      worker this needs to receive a push while the app is closed.
+      - **THE REFRAME, which is why this feature is as small as it is.**
+        "Notify about the world changing, never about the user's behaviour"
+        is not only an ethical rule: "you haven't watched S6E1" would require
+        the server to read every user's watch progress, while "S6E1 aired"
+        does not. So the trigger is a **per-show world fact**, which is what
+        lets ONE upstream call serve every follower of a show, and removes
+        watch progress from the server's requirements entirely.
+      - **Suppression-only, and it must stay that way.** Watch state IS
+        consulted — if you already watched S6E1, sending "S6E1 aired!" is
+        redundant noise — but only ever to REMOVE a recipient, never to
+        create one. The mechanical test, so nobody has to re-derive the
+        ethics: **if deleting all watch data would remove the notification,
+        it was a behaviour ping.** A world event survives that deletion; a
+        nag does not. `lib/notifications/detect.ts` cannot express one — its
+        whole signature is `(Title, snapshot)`, with no user in scope — and
+        the suppression read lives in a separate module whose deletion would
+        still leave every notification being sent.
+      - **The rule is enforced by the SCHEMA, not just prose.**
+        `notification_event_kind` is a Postgres enum, so adding
+        `you_are_behind` needs a migration and therefore review, rather than
+        a one-line client change. Check 16 of the adversarial suite pins it.
+      - **Two phases, and the split is what makes quiet hours free.** Detect
+        (per show, deduped across users) writes to `pending_notifications`;
+        deliver (per user, quiet-hours aware) drains it. The ledger is
+        written **on send, never on detection**, so a notification that is
+        due but currently silenced simply stays queued and a later run picks
+        it up — no scheduler, no retry queue, no timer.
+      - **Scheduling forced a real correction, verified before building.**
+        Vercel Hobby cron is **daily-only with ±59min precision**. The delay
+        was acceptable; the interaction was not — the single daily run lands
+        at the same UTC hour, so any user whose quiet window contains that
+        hour would be silenced **permanently**, with no error anywhere.
+        Quiet hours are only meaningful if the job runs more often than the
+        window is long. Resolved by an **external hourly scheduler with the
+        Vercel daily cron kept as a floor**, so a dead scheduler degrades to
+        daily rather than to silence. The route is idempotent and
+        frequency-agnostic by construction, which is what made this a
+        deployment change rather than a redesign.
+      - **The freeze runs the OPPOSITE way from `lib/watchlog`.** That module
+        freezes a day key because it records HISTORY — a fact about where the
+        user *was*. Quiet hours are a LIVE preference about where they *are*,
+        so the IANA zone is refreshed by the client and never frozen;
+        freezing it would wake someone at 3am after they moved country. A
+        fixed offset would be wrong for a third reason: DST. Air dates stay
+        frozen calendar dates as always. The rule both obey: **never derive a
+        user's local time by assuming the server's zone.**
+      - **First-ever use of `SUPABASE_SERVICE_ROLE_KEY`** — see the standing
+        section above for the blast radius and the containment. Short
+        version: exactly one importer, enforced by a guard test that is the
+        only mechanical thing preventing a second; the client never escapes
+        its module; reachable tables are a typed allowlist where
+        `writeTable("watched_episodes")` is a compile error.
+      - **Anti-noise, collected**: default off for every show, no global
+        "all shows" switch anywhere, never derived from tracking status, one
+        notification per show per run (a full-season drop is "8 new
+        episodes", not eight pushes — enforced in *detection*, the only layer
+        that sees the whole change at once), OS-level `tag` collapsing, and
+        exactly two event kinds with no room in the schema for a third.
+      - **iOS gets instructions, never a dead button.** Capability is
+        feature-detected, never version-sniffed, so the commonly-cited 16.4
+        floor appears in neither code nor copy — the design doc flags that
+        number as asserted rather than verified.
+      - **`web-push` is a deliberate exception** to this project's
+        anti-dependency bias. The icons/charts arguments are about bundle
+        weight and API surface for simple things; VAPID JWT signing plus RFC
+        8291 payload encryption is real cryptography where a subtle mistake
+        is silent.
+      - Corrects the design doc: follows and prefs do **not** join
+        `SYNC_TABLES`. `lib/sync` reconciles a local-first replica, but these
+        have no offline story — the only consumer is a server-side cron — so
+        they are the same class as comments and lists: account-gated and
+        server-authoritative, which makes cross-device consistency *stronger*
+        than sync rather than weaker.
+      - **Verified**: 17 adversarial SQL checks against real PostgreSQL 18
+        (negative control plus targeted controls proving the `followed_at`
+        lock and the `USING (false)` table each fail when broken); 4 guard
+        negative controls (a rogue service-role importer, an exported client,
+        a forbidden `writeTable`, and the route guard catching both new
+        routes unprompted); 51 unit tests across quiet hours, detection and
+        delivery, with the timezone suite re-run under four host zones
+        including a half-hour offset. 817 across the suite.
+      - **Not verified**: no live end-to-end push. That needs VAPID keys, a
+        deployed HTTPS origin and a real device — none of which exist in this
+        environment. Everything up to `webpush.sendNotification` is
+        exercised; the network hop itself is not. **Still owed**: a real
+        subscribe → cron → device round trip, and the iOS
+        install-then-subscribe path on actual hardware.
 
 ---
 

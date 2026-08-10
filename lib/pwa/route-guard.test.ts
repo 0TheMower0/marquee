@@ -88,6 +88,11 @@ const NEVER_CACHED_ROUTES = [
   // under /api/ and not /api/content/, so it must be named explicitly rather
   // than silently falling out of the prefix rule above.
   "/api/import/resolve",
+  // Phase 7 Step 5. A GET, and therefore something the worker's fetch handler
+  // WOULD see — but it is secret-gated, runs with BYPASSRLS, and returns
+  // per-invocation counts. Caching any part of it would be absurd; naming it
+  // here is how that gets stated rather than assumed.
+  "/api/cron/notifications",
   // OAuth/email-link return path — one-time, identity-bearing tokens in the
   // URL. Caching a REDIRECT here would be actively dangerous.
   "/auth/callback",

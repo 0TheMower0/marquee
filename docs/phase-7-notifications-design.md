@@ -188,6 +188,22 @@ if the job runs more often than the window is long.**
 Both hit the same idempotent endpoint; overlapping invocations are safe by
 §2.2's unique constraint.
 
+**As built.** `vercel.json` declares the daily floor at `17 3 * * *` — a
+non-round minute out of habit rather than necessity, since Hobby fires
+anywhere within the hour regardless (§0). `vercel.json` is strict JSON and
+cannot carry comments, which is why that reasoning lives here.
+
+Authentication is the same for both callers: **Vercel automatically sends
+`Authorization: Bearer $CRON_SECRET`** when that environment variable is set,
+which is exactly the header `authorize()` in the route expects, so the
+external scheduler is configured identically and no second code path exists.
+
+An unset `CRON_SECRET` makes the route refuse every request rather than run
+open — an unset secret must never mean "allow all", which is the shape of
+default that gets deployed by accident. The route answers **404** rather than
+401 on a bad secret: a 401 confirms the endpoint exists and is worth
+attacking, and there is nothing here an unauthenticated caller should learn.
+
 ### 3.3 One approach explicitly ruled out
 
 **Piggybacking detection on organic app traffic** (any page load pings a
@@ -309,10 +325,26 @@ for every API role so PostgREST exposes nothing):**
 - `pending_notifications(id, user_id, show_id, event_kind, event_key, payload jsonb, detected_at)` — UNIQUE `(user_id, show_id, event_key)`
 - `notification_log(id, user_id, show_id, event_kind, event_key, sent_at)` — UNIQUE `(user_id, show_id, event_key)`
 
-`show_follows` and `notification_prefs` join `SYNC_TABLES` so preferences sync
-like everything else. `pending_notifications` and `notification_log`
-deliberately do **not** — they are delivery mechanics, not user data, and
-syncing them to every device would be pure noise.
+⚠️ **CORRECTION, made while building step 3.** This section originally said
+`show_follows` and `notification_prefs` would join `SYNC_TABLES` "so
+preferences sync like everything else". **They do not, and should not.**
+
+`lib/sync` exists to reconcile a LOCAL-FIRST replica with the server —
+tracking, ratings and the watch log are all fully usable offline and converge
+later. Notification follows have no offline story at all: the only thing that
+acts on them is a server-side cron, so a local replica could never be
+authoritative and could never be acted upon while disconnected. Adding them
+would mean an outbox entry, a reconcile rule and a local mirror for data whose
+sole consumer runs on the server.
+
+They are the same class as **comments** (Phase 6 Step 6a) and **lists** (6b):
+account-gated and server-authoritative, deliberately outside `SYNC_TABLES`.
+Cross-device consistency is not weakened by this — it is *stronger*, since a
+server-authoritative row is identical everywhere by construction with no
+convergence window at all.
+
+`pending_notifications` and `notification_log` are likewise outside it, for
+the original reason: they are delivery mechanics rather than user data.
 
 An adversarial SQL suite (`supabase/tests/05_notifications_adversarial.sql`)
 attacks it in the established style — attack, don't assert — including a
