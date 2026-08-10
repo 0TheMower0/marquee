@@ -138,6 +138,27 @@ export interface Title extends TitleSummary {
   cast: CastMember[];
   /** Creator (TV) or director/writers (movie) — see the note on `CrewRole`. */
   crew: CrewMember[];
+  /**
+   * The most recently AIRED episode, and the next one scheduled. TV only;
+   * both null for movies, and either may be null for TV (a show that has
+   * never aired has no last; an ended show has no next).
+   *
+   * ============================================================================
+   * WHY THESE ARE ON `Title` AND NOT DERIVED FROM `getSeasons`
+   * ============================================================================
+   * They ARE derivable — fetch every season, fetch the last season's episodes,
+   * scan for the air-date boundary. That is two-plus round trips per show, and
+   * Phase 7 Step 5's notification detector runs it across every show anyone
+   * follows on a schedule. TMDB returns both objects inline on the show detail
+   * response `getTitle` already fetches, so putting them here makes that
+   * detection **one call per show** instead of three.
+   *
+   * `runtimeMinutes` on these is often null even when the season's own episode
+   * list has it — TMDB's inline summary is thinner than the full episode
+   * record. Do not treat a null here as "this episode has no runtime".
+   */
+  lastEpisodeToAir: Episode | null;
+  nextEpisodeToAir: Episode | null;
 }
 
 export interface Season {

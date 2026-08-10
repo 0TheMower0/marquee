@@ -118,6 +118,10 @@ export interface TmdbTitleDetail extends TmdbListItem {
   /** Present only with `append_to_response=external_ids`. The only way to get
    *  a TV show's IMDb id. */
   external_ids?: { imdb_id?: string | null };
+  /** TV only, returned inline on the show detail response. Either may be null:
+   *  a show that has never aired has no last, an ended one has no next. */
+  last_episode_to_air?: TmdbEpisode | null;
+  next_episode_to_air?: TmdbEpisode | null;
 }
 
 interface TmdbEpisode {
@@ -536,7 +540,28 @@ export function toTitle(raw: TmdbTitleDetail, mediaType: MediaType): Title | nul
       .filter((member): member is CastMember => member !== null)
       .sort((a, b) => a.order - b.order),
     crew: toCrew(raw, mediaType),
+    lastEpisodeToAir:
+      mediaType === "tv" ? toInlineEpisode(raw.last_episode_to_air, summary.id) : null,
+    nextEpisodeToAir:
+      mediaType === "tv" ? toInlineEpisode(raw.next_episode_to_air, summary.id) : null,
   };
+}
+
+/**
+ * The `last_episode_to_air` / `next_episode_to_air` objects TMDB returns
+ * inline on a show detail response.
+ *
+ * Routed through `toEpisodes` rather than mapped separately so a change to how
+ * an episode is normalized cannot silently apply to a season's episode list
+ * but not to these two — the same "one mapper, no second copy" reasoning the
+ * import layer's duplicated-predicate bug taught (Phase 7 Step 3).
+ */
+function toInlineEpisode(
+  raw: TmdbEpisode | null | undefined,
+  showId: string,
+): Episode | null {
+  if (!raw) return null;
+  return toEpisodes([raw], showId, raw.season_number ?? 0)[0] ?? null;
 }
 
 /* ---------------------------------------------------------------------------

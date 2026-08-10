@@ -5,6 +5,39 @@ interface ShowEpisodeData {
   episodesBySeason: Record<number, Episode[]>;
 }
 
+/**
+ * An air date `days` from today, as "YYYY-MM-DD" in UTC to match
+ * `isFutureAirDate`'s own convention (lib/utils/dates.ts).
+ *
+ * ============================================================================
+ * WHY ONE FIXTURE DATE IS RELATIVE WHEN EVERY OTHER ONE IS HARDCODED
+ * ============================================================================
+ * Aired episodes are HISTORY and are correctly frozen — "Breaking Bad S1E1
+ * aired 2008-01-20" is true forever.
+ *
+ * But this catalog also needs a show that is *currently airing*, with a next
+ * episode that has NOT yet aired, so that state is reachable offline. A
+ * hardcoded future date cannot do that: it silently becomes a past date and
+ * the fixture stops testing anything.
+ *
+ * That is not hypothetical. The Bear's "not yet aired" episode was written as
+ * 2026-08-05 against a "today" of 2026-07-29, and by 2026-08-10 it had
+ * expired — taking Up Next's entire `upcoming` bucket and the schedule feed's
+ * this-week/later buckets down with it, in mock mode, with nothing failing to
+ * say so. Found only because Phase 7 Step 5's `nextEpisodeToAir` derivation
+ * started returning null for the one show built to exercise it.
+ *
+ * A relative date does not make this data less deterministic than it was:
+ * `isFutureAirDate` already compares against the real clock, so the fixture's
+ * MEANING was always time-dependent. This makes that dependence correct
+ * instead of decaying. Do not "fix" it back to a literal.
+ */
+function daysFromToday(days: number): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function ep(
   showId: string,
   seasonNumber: number,
@@ -425,15 +458,23 @@ export const MOCK_EPISODES: Record<string, ShowEpisodeData> = {
           "2026-07-15",
           41,
         ),
-        // Not yet aired as of "today" in this app (2026-07-29) — this is the
-        // "currently airing, next episode date in the future" test case.
+        // THE "currently airing" fixture: deliberately always 5 days out, so
+        // this show permanently exercises "next episode exists but hasn't
+        // aired yet" instead of expiring into the past. See `daysFromToday`
+        // for why this one date is relative when every other is a literal.
+        //
+        // 5 days also keeps it inside lib/schedule's "This week" bucket
+        // (7-day window), so that bucket stays reachable in mock mode too.
+        // Season 4 must stay at FOUR episodes: CLAUDE.md documents "3 watched,
+        // 1 unaired reports 75%" as a worked example, and adding a fifth would
+        // quietly make that documented number wrong.
         ep(
           "the-bear",
           4,
           4,
           "Second Service",
           "Carmy has to decide, in real time, whether tonight's service is the one that finally works.",
-          "2026-08-05",
+          daysFromToday(5),
           44,
         ),
       ],

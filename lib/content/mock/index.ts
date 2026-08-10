@@ -1,3 +1,5 @@
+import { isFutureAirDate } from "@/lib/utils/dates";
+
 import { ContentError } from "../errors";
 import type {
   ContentProvider,
@@ -50,7 +52,65 @@ function simulateLatency(signal?: AbortSignal): Promise<void> {
 }
 
 function hydrate(entry: CatalogEntry): Title {
-  return { ...entry, placeholder: derivePlaceholderArt(entry.id) };
+  const boundary = entry.mediaType === "tv" ? airBoundaryFor(entry) : null;
+  return {
+    ...entry,
+    placeholder: derivePlaceholderArt(entry.id),
+    lastEpisodeToAir: boundary?.last ?? null,
+    nextEpisodeToAir: boundary?.next ?? null,
+  };
+}
+
+/**
+ * The most recently aired episode and the next scheduled one, DERIVED from
+ * whatever episode data this show already has rather than hand-authored onto
+ * ~19 catalog entries.
+ *
+ * Derived on purpose, for the reason this codebase keeps reaching for: two
+ * copies of the same fact drift. A hand-written `lastEpisodeToAir` would go
+ * stale the moment `MOCK_EPISODES` or `SEASON_SHAPES` changed, and nothing
+ * would catch it — mock data has no upstream to disagree with.
+ *
+ * `tmdbProvider` gets these two fields inline from TMDB and does no scanning
+ * at all. That asymmetry is fine and is the usual shape: the mock provider
+ * pays a little synthesis to satisfy an interface the real one satisfies for
+ * free (compare `toSummary`'s explicit allowlist, which exists to hold mock
+ * to a constraint TMDB imposes naturally).
+ *
+ * Episodes with a null air date count as AIRED, matching `isFutureAirDate`'s
+ * own rule — most SEASON_SHAPES-tier shows carry no per-episode dates, and
+ * treating unknown as "hasn't aired" would leave nearly every mock show with
+ * no `lastEpisodeToAir` at all.
+ */
+function airBoundaryFor(entry: CatalogEntry): { last: Episode | null; next: Episode | null } {
+  const authored = MOCK_EPISODES[entry.id];
+  const seasons = authored ? authored.seasons : synthesizeSeasons(entry);
+
+  let last: Episode | null = null;
+  let next: Episode | null = null;
+
+  for (const season of seasons) {
+    // Season 0 (specials) is excluded, the same exclusion the progress math in
+    // lib/tracking applies — a retrospective airing today is not "a new
+    // episode of this show" in the sense a notification means it.
+    if (season.seasonNumber < 1) continue;
+
+    const episodes = authored
+      ? authored.episodesBySeason[season.seasonNumber] ?? []
+      : synthesizeEpisodes(entry, season);
+
+    for (const episode of episodes) {
+      if (isFutureAirDate(episode.airDate)) {
+        // Seasons and episodes are both in ascending order, so the first
+        // future episode encountered is the next one to air.
+        if (!next) next = episode;
+      } else {
+        last = episode;
+      }
+    }
+  }
+
+  return { last, next };
 }
 
 /**

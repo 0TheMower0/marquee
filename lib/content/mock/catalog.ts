@@ -53,9 +53,19 @@ function crewMember(id: string, name: string, role: CrewRole): CrewMember {
   return { id, name, role, profileUrl: null };
 }
 
-/** Every field of `Title` except `placeholder`, which is derived
- *  deterministically from `id` at read time (see ../shared/placeholder). */
-export type CatalogEntry = Omit<Title, "placeholder">;
+/**
+ * Every field of `Title` except the ones DERIVED at read time by `hydrate`:
+ *
+ * - `placeholder` — deterministic from `id` (see ../shared/placeholder).
+ * - `lastEpisodeToAir` / `nextEpisodeToAir` — scanned out of this show's own
+ *   episode data (see `airBoundaryFor` in ./index.ts), so they cannot drift
+ *   out of sync with `MOCK_EPISODES` / `SEASON_SHAPES` the way a
+ *   hand-authored copy silently would.
+ */
+export type CatalogEntry = Omit<
+  Title,
+  "placeholder" | "lastEpisodeToAir" | "nextEpisodeToAir"
+>;
 
 const RELEASED: TitleStatus = "released";
 
