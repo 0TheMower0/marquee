@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { SearchIcon } from "@/components/ui/icons";
+import { AlertIcon, SearchIcon } from "@/components/ui/icons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils/cn";
 
@@ -22,12 +22,35 @@ const GRID_CLASS = "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3";
  * Trending one scroll down.
  */
 export function ContinueWatchingSection() {
-  const { settled, hasWatchingShows, ready, upcoming, seasonCountsByShowId, markEpisodeWatched } =
-    useUpNextItems();
+  const {
+    settled,
+    hasWatchingShows,
+    loadFailed,
+    ready,
+    upcoming,
+    seasonCountsByShowId,
+    markEpisodeWatched,
+  } = useUpNextItems();
 
   if (!settled) return hasWatchingShows ? <ContinueWatchingSkeleton /> : null;
 
   const nothingToShow = ready.length === 0 && upcoming.length === 0;
+
+  // Same rule as the Home rail: with shows in progress but nothing fetchable,
+  // "Nothing in progress" is untrue. It matters more here — this section IS
+  // My Library's view of what you're watching, so a false empty reads as
+  // "your library lost your shows" rather than "the network is down".
+  if (hasWatchingShows && nothingToShow && loadFailed) {
+    return (
+      <EmptyState
+        tone="danger"
+        icon={<AlertIcon />}
+        title="Couldn't load what's next"
+        body="Your progress is safe — we just couldn't reach the content source to check what's airing."
+        className="py-8"
+      />
+    );
+  }
 
   if (!hasWatchingShows || nothingToShow) {
     return (

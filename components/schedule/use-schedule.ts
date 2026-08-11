@@ -73,6 +73,21 @@ export interface UseScheduleResult {
   /** Reliable even while `settled` is false, once tracking has loaded —
    *  distinguishes "still fetching" from "genuinely nothing eligible". */
   hasEligibleShows: boolean;
+  /**
+   * At least one show's data could not be fetched.
+   *
+   * Without this the feed cannot tell "nothing new has aired" from "we could
+   * not reach the content source", and it rendered the former for both. With
+   * TMDB down and a show tracked, `/schedule` confidently said **"You're all
+   * caught up"** — a statement that is not merely unhelpful but false, and
+   * produced precisely when the app knows least. Errors were caught per-show
+   * and stored, then never surfaced past this hook.
+   *
+   * Partial is the common case, so this is a flag rather than a fatal state:
+   * one show failing should not hide the other thirty-nine. The view decides
+   * how loud to be based on whether anything survived.
+   */
+  loadFailed: boolean;
   feed: ScheduleFeed;
   seasonCountsByShowId: Record<string, SeasonEpisodeCounts>;
   markEpisodeWatched: MarkEpisodeWatched;
@@ -178,10 +193,20 @@ export function useSchedule(): UseScheduleResult {
   });
   const settled = trackingReady && !seasonsSettling && !episodesSettling;
 
+  // Scoped to the shows/candidates CURRENTLY tracked, not to every entry the
+  // caches ever held: a show removed from the library must not keep the feed
+  // reporting a failure forever.
+  const loadFailed =
+    showIds.some((id) => seasonsCache[id]?.status === "error") ||
+    candidates.some(
+      (c) => episodesCache[episodeCacheKey(c.entry.id, c.seasonNumber)]?.status === "error",
+    );
+
   if (!settled) {
     return {
       settled: false,
       hasEligibleShows,
+      loadFailed,
       feed: { ready: [], thisWeek: [], later: [] },
       seasonCountsByShowId,
       markEpisodeWatched,
@@ -197,5 +222,12 @@ export function useSchedule(): UseScheduleResult {
 
   const feed = groupSchedule(buildScheduleItems(candidates, episodesByShowId));
 
-  return { settled: true, hasEligibleShows, feed, seasonCountsByShowId, markEpisodeWatched };
+  return {
+    settled: true,
+    hasEligibleShows,
+    loadFailed,
+    feed,
+    seasonCountsByShowId,
+    markEpisodeWatched,
+  };
 }

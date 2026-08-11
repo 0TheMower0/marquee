@@ -60,6 +60,16 @@ export interface UseUpNextItemsResult {
   /** Reliable even while `settled` is false, once storage has loaded —
    *  distinguishes "still fetching" from "genuinely nothing tracked". */
   hasWatchingShows: boolean;
+  /**
+   * At least one show's data could not be fetched.
+   *
+   * Same gap as the schedule feed's own `loadFailed`, and it produced the
+   * same falsehood: with the content source unreachable, a user with five
+   * shows in progress saw "Nothing in progress" — while Trending, directly
+   * below on the same page, correctly reported the outage. Two adjacent
+   * sections disagreeing about whether the app can reach TMDB.
+   */
+  loadFailed: boolean;
   ready: UpNextItem[];
   upcoming: UpNextItem[];
   seasonCountsByShowId: Record<string, SeasonEpisodeCounts>;
@@ -141,10 +151,19 @@ export function useUpNextItems(): UseUpNextItemsResult {
   });
   const settled = trackingReady && !seasonsSettling && !episodesSettling;
 
+  // Scoped to currently-watching shows, not every cache entry ever held, so
+  // removing a show clears its failure rather than leaving the rail flagged.
+  const loadFailed =
+    watchingIds.some((id) => seasonsCache[id]?.status === "error") ||
+    candidates.some(
+      (c) => episodesCache[episodeCacheKey(c.entry.id, c.seasonNumber)]?.status === "error",
+    );
+
   if (!settled) {
     return {
       settled: false,
       hasWatchingShows,
+      loadFailed,
       ready: [],
       upcoming: [],
       seasonCountsByShowId,
@@ -164,6 +183,7 @@ export function useUpNextItems(): UseUpNextItemsResult {
   return {
     settled: true,
     hasWatchingShows,
+    loadFailed,
     ready: ranked.ready,
     upcoming: ranked.upcoming,
     seasonCountsByShowId,

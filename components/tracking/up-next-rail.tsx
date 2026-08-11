@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { CompassIcon } from "@/components/ui/icons";
+import { AlertIcon, CompassIcon } from "@/components/ui/icons";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SeasonEpisodeCounts, UpNextItem } from "@/lib/tracking";
 import { cn } from "@/lib/utils/cn";
@@ -17,8 +17,15 @@ import { useUpNextItems } from "./use-up-next-items";
  * and added the empty state below, which used to be a bare `return null`.
  */
 export function UpNextRail() {
-  const { settled, hasWatchingShows, ready, upcoming, seasonCountsByShowId, markEpisodeWatched } =
-    useUpNextItems();
+  const {
+    settled,
+    hasWatchingShows,
+    loadFailed,
+    ready,
+    upcoming,
+    seasonCountsByShowId,
+    markEpisodeWatched,
+  } = useUpNextItems();
 
   // Nothing tracked yet AND still loading both read as "no watching shows"
   // here — see the doc comment on `hasWatchingShows` in the hook for why
@@ -26,6 +33,30 @@ export function UpNextRail() {
   if (!settled) return hasWatchingShows ? <UpNextRailSkeleton /> : null;
 
   const nothingToShow = ready.length === 0 && upcoming.length === 0;
+
+  // Shows ARE in progress, we just could not find out what is next for any of
+  // them. "Nothing in progress" would be flatly untrue, and was: with TMDB
+  // unreachable this rail said exactly that while Trending, one section
+  // below, correctly reported the outage.
+  if (hasWatchingShows && nothingToShow && loadFailed) {
+    return (
+      <section aria-labelledby="up-next-heading">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="up-next-heading" className="font-display text-display-lg text-fg uppercase">
+            Up Next
+          </h2>
+          <ScheduleLink />
+        </div>
+        <EmptyState
+          tone="danger"
+          icon={<AlertIcon />}
+          title="Couldn't load what's next"
+          body="Your progress is safe — we just couldn't reach the content source to check what's airing."
+          className="py-8"
+        />
+      </section>
+    );
+  }
 
   if (!hasWatchingShows || nothingToShow) {
     return (

@@ -1,5 +1,6 @@
 "use client";
 
+import { ContentErrorState } from "@/components/content/content-error-state";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CompassIcon, TvIcon } from "@/components/ui/icons";
@@ -22,7 +23,7 @@ import { useSchedule } from "./use-schedule";
  * fetch, so a Server Component has nothing to render it from.
  */
 export function ScheduleView() {
-  const { settled, hasEligibleShows, feed, seasonCountsByShowId, markEpisodeWatched } =
+  const { settled, hasEligibleShows, loadFailed, feed, seasonCountsByShowId, markEpisodeWatched } =
     useSchedule();
 
   if (!settled) {
@@ -31,6 +32,20 @@ export function ScheduleView() {
 
   const nothingToShow =
     feed.ready.length === 0 && feed.thisWeek.length === 0 && feed.later.length === 0;
+
+  // Nothing survived AND something failed: we genuinely do not know what has
+  // aired, so say that. Claiming "you're all caught up" here would be a
+  // confident falsehood produced by an outage — the exact bug this branch
+  // exists to prevent. Ordered before the two empty states below so it can
+  // never be reached past them.
+  if (nothingToShow && loadFailed) {
+    return (
+      <div className="p-6 sm:p-8">
+        <PageHeader />
+        <ContentErrorState kind="network" className="mt-8 py-8" />
+      </div>
+    );
+  }
 
   if (!hasEligibleShows) {
     return (
@@ -68,6 +83,18 @@ export function ScheduleView() {
   return (
     <div className="space-y-10 p-6 sm:p-8">
       <PageHeader />
+
+      {/* Something DID load, so the feed below is real — but it is incomplete,
+          and a feed whose whole job is "what's actionable" must not let a
+          silent gap read as "nothing there". Inline and calm rather than an
+          error panel: the correct reaction is "scroll on, check back later",
+          not "something is broken". */}
+      {loadFailed && (
+        <p role="status" className="text-fg-muted text-body-sm">
+          Some shows couldn&rsquo;t be checked just now, so this list may be
+          missing a few. Reloading usually sorts it.
+        </p>
+      )}
 
       {feed.ready.length > 0 && (
         <ScheduleSection

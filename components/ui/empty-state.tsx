@@ -46,6 +46,14 @@ export function EmptyState({
 
   return (
     <section
+      // A danger-toned empty state is an ERROR — a failed search, an
+      // unreachable content source — and it replaces content in place, after
+      // the user has already acted. Without a live region that swap is
+      // announced to nobody: the tone was carried entirely by colour and an
+      // aria-hidden icon, so a screen-reader user got silence where a sighted
+      // one got a red panel. `alert` rather than `status` because these appear
+      // in response to something the user just did and should interrupt.
+      role={tone === "danger" ? "alert" : undefined}
       className={cn(
         "flex flex-col items-center justify-center px-6 py-14 text-center",
         className,
