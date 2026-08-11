@@ -1,5 +1,5 @@
 import { badgesEarnedStore } from "@/lib/badges/store";
-import { getHomeConfig, setHomeConfig } from "@/lib/home/store";
+import { getHomeConfig, setHomeConfig } from "@/lib/home";
 import { ratingsStore } from "@/lib/ratings/store";
 import { defineStore } from "@/lib/storage";
 import { trackingStore } from "@/lib/tracking/store";

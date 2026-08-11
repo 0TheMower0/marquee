@@ -1,7 +1,7 @@
 "use client";
 
 import { badgesEarnedStore } from "@/lib/badges/store";
-import { getHomeConfig, setHomeConfig } from "@/lib/home/store";
+import { getHomeConfig, setHomeConfig } from "@/lib/home";
 import { ratingsStore } from "@/lib/ratings/store";
 import { trackingStore } from "@/lib/tracking/store";
 import { watchLogStore } from "@/lib/watchlog/store";

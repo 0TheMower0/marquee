@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_HOME_CONFIG, type HomeConfig } from "@/lib/home/types";
+import { DEFAULT_HOME_CONFIG, type HomeConfig } from "@/lib/home";
 
 import { homeConfigToRow, rowToHomeConfig } from "./wire";
 import type { HomeConfigRow } from "./types";

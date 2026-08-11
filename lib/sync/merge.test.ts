@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_HOME_CONFIG, type HomeConfig } from "@/lib/home/types";
+import { DEFAULT_HOME_CONFIG, type HomeConfig } from "@/lib/home";
 import type { RatingEntry } from "@/lib/ratings/types";
 import type { TitleSummary } from "@/lib/content/types";
 import type { TrackingEntry, TrackingStatus, WatchedEpisodes } from "@/lib/tracking/types";

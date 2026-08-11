@@ -1,4 +1,5 @@
 import type { MediaType } from "@/lib/content/types";
+import { isHomeConfig, type HomeConfig } from "@/lib/home";
 import { normalizeRanges } from "@/lib/tracking/ranges";
 import type {
   EpisodeRange,
@@ -8,8 +9,6 @@ import type {
 } from "@/lib/tracking/types";
 import type { RatingEntry } from "@/lib/ratings/types";
 import { WATCH_KIND, type WatchEvent } from "@/lib/watchlog/types";
-
-import { isHomeConfig, type HomeConfig } from "@/lib/home/types";
 
 import type {
   HomeConfigRow,

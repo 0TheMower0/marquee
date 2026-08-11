@@ -1,5 +1,5 @@
 import type { MediaType } from "@/lib/content/types";
-import type { HomeConfig } from "@/lib/home/types";
+import type { HomeConfig } from "@/lib/home";
 import type { RatingEntry } from "@/lib/ratings/types";
 import { normalizeRanges } from "@/lib/tracking/ranges";
 import type { TrackingEntry, TrackingStatus, WatchedEpisodes } from "@/lib/tracking/types";

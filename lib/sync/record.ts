@@ -1,7 +1,7 @@
 "use client";
 
 import type { MediaType } from "@/lib/content/types";
-import type { HomeConfig } from "@/lib/home/types";
+import type { HomeConfig } from "@/lib/home";
 import type { RatingEntry } from "@/lib/ratings/types";
 import type { TrackingEntry, WatchedEpisodes } from "@/lib/tracking/types";
 import { addedEpisodes } from "@/lib/watchlog/diff";
