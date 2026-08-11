@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { DEFAULT_HOME_CONFIG, type HomeConfig } from "@/lib/home/types";
 import type { RatingEntry } from "@/lib/ratings/types";
 import type { TitleSummary } from "@/lib/content/types";
 import type { TrackingEntry, TrackingStatus, WatchedEpisodes } from "@/lib/tracking/types";
 import type { WatchEvent } from "@/lib/watchlog/types";
 
+import { isSnapshotEmpty } from "./backup";
 import {
   buildMergePlan,
   emptyRemoteSnapshot,
@@ -115,7 +117,7 @@ function episodeRow(
 }
 
 function emptyLocal(): LocalSnapshot {
-  return { tracking: {}, ratings: {}, watchLog: {}, badges: {}, highestLevelSeen: 1 };
+  return { tracking: {}, ratings: {}, watchLog: {}, badges: {}, highestLevelSeen: 1, homeConfig: null };
 }
 
 /* ==========================================================================
@@ -594,6 +596,114 @@ describe("merge: badges and xp", () => {
 });
 
 /* ==========================================================================
+ * home_config — the simplest rule in this file, and the newest one.
+ *
+ * No union: an arbitrary preference blob has no honest union (see the
+ * migration's header comment). "Newer client_updated_at wins, wholesale" is
+ * the whole rule, but "wins against what" needs its own tests, because an
+ * untouched side is not the same as a side that lost a comparison.
+ * ======================================================================= */
+
+describe("merge: home_config", () => {
+  function config(overrides: Partial<HomeConfig> = {}): HomeConfig {
+    return { ...DEFAULT_HOME_CONFIG, ...overrides };
+  }
+
+  it("stays null when NEITHER side has ever saved one", async () => {
+    const plan = await buildMergePlan(USER, emptyLocal(), emptyRemoteSnapshot(), { now: NOW });
+    expect(plan.local.homeConfig).toBeNull();
+    expect(plan.push.home_config).toEqual([]);
+  });
+
+  it("local wins outright when remote has never saved one — not a comparison it wins, one it has no opponent for", async () => {
+    const local = emptyLocal();
+    local.homeConfig = config({ firstPage: "library", updatedAt: new Date("2026-01-01T00:00:00Z") });
+
+    const plan = await buildMergePlan(USER, local, emptyRemoteSnapshot(), { now: NOW });
+    expect(plan.local.homeConfig?.firstPage).toBe("library");
+    expect(plan.push.home_config).toHaveLength(1);
+  });
+
+  it("remote wins outright when local has never saved one", async () => {
+    const remote: RemoteSnapshot = {
+      ...emptyRemoteSnapshot(),
+      homeConfig: {
+        user_id: USER,
+        config: { firstPage: "schedule", sections: DEFAULT_HOME_CONFIG.sections, showStreakBadge: true },
+        client_updated_at: "2026-01-01T00:00:00.000Z",
+      },
+    };
+
+    const plan = await buildMergePlan(USER, emptyLocal(), remote, { now: NOW });
+    expect(plan.local.homeConfig?.firstPage).toBe("schedule");
+  });
+
+  it("picks the NEWER side when both have saved one — local newer", async () => {
+    const local = emptyLocal();
+    local.homeConfig = config({ firstPage: "library", updatedAt: new Date("2026-06-01T00:00:00Z") });
+
+    const remote: RemoteSnapshot = {
+      ...emptyRemoteSnapshot(),
+      homeConfig: {
+        user_id: USER,
+        config: { firstPage: "search", sections: DEFAULT_HOME_CONFIG.sections, showStreakBadge: true },
+        client_updated_at: "2026-01-01T00:00:00.000Z", // older
+      },
+    };
+
+    const plan = await buildMergePlan(USER, local, remote, { now: NOW });
+    expect(plan.local.homeConfig?.firstPage).toBe("library");
+  });
+
+  it("picks the NEWER side when both have saved one — remote newer", async () => {
+    const local = emptyLocal();
+    local.homeConfig = config({ firstPage: "library", updatedAt: new Date("2026-01-01T00:00:00Z") });
+
+    const remote: RemoteSnapshot = {
+      ...emptyRemoteSnapshot(),
+      homeConfig: {
+        user_id: USER,
+        config: { firstPage: "search", sections: DEFAULT_HOME_CONFIG.sections, showStreakBadge: true },
+        client_updated_at: "2026-06-01T00:00:00.000Z", // newer
+      },
+    };
+
+    const plan = await buildMergePlan(USER, local, remote, { now: NOW });
+    expect(plan.local.homeConfig?.firstPage).toBe("search");
+  });
+
+  it("never blends the two sides — the resolved config is one side's, whole", async () => {
+    // A "smart" merge might try to keep local's sections but remote's
+    // firstPage. That is exactly the union this table deliberately has none
+    // of — the whole object comes from ONE side.
+    const local = emptyLocal();
+    local.homeConfig = config({
+      firstPage: "library",
+      showStreakBadge: false,
+      updatedAt: new Date("2026-06-01T00:00:00Z"),
+    });
+
+    const remote: RemoteSnapshot = {
+      ...emptyRemoteSnapshot(),
+      homeConfig: {
+        user_id: USER,
+        config: { firstPage: "search", sections: DEFAULT_HOME_CONFIG.sections, showStreakBadge: true },
+        client_updated_at: "2026-01-01T00:00:00.000Z",
+      },
+    };
+
+    const plan = await buildMergePlan(USER, local, remote, { now: NOW });
+    expect(plan.local.homeConfig).toEqual(local.homeConfig);
+  });
+
+  it("does not count towards §6.6's confirmation gate — a settings-only device merges silently", () => {
+    const local = emptyLocal();
+    local.homeConfig = config({ updatedAt: NOW });
+    expect(isSnapshotEmpty(local)).toBe(true);
+  });
+});
+
+/* ==========================================================================
  * The watch log, and the idempotency guarantee
  * ======================================================================= */
 
@@ -741,6 +851,7 @@ describe("merge: never loses local data", () => {
         marathoner: { earnedAt: new Date("2026-05-01T00:00:00Z") },
       },
       highestLevelSeen: 21,
+      homeConfig: null,
     };
 
     // A busy remote side that disagrees in every way it can.
@@ -773,6 +884,7 @@ describe("merge: never loses local data", () => {
       watchEvents: [],
       badges: [{ user_id: USER, badge_id: "deep-cut", earned_at: "2026-06-01T00:00:00.000Z" }],
       xp: { user_id: USER, highest_level_seen: 8 },
+      homeConfig: null,
     };
 
     const plan = await buildMergePlan(USER, local, remote, { now: NOW });
@@ -818,6 +930,7 @@ describe("merge: never loses local data", () => {
       watchLog: { "2026-07-01": [EPISODE_EVENT] },
       badges: { marathoner: { earnedAt: new Date("2026-05-01T00:00:00Z") } },
       highestLevelSeen: 5,
+      homeConfig: { ...DEFAULT_HOME_CONFIG, firstPage: "library", updatedAt: NOW },
     };
 
     const first = await buildMergePlan(USER, local, emptyRemoteSnapshot(), { now: NOW });
@@ -830,6 +943,7 @@ describe("merge: never loses local data", () => {
       watchEvents: first.push.watch_events,
       badges: first.push.badges_earned,
       xp: first.push.xp_state[0],
+      homeConfig: first.push.home_config[0] ?? null,
     };
 
     const second = await buildMergePlan(USER, first.local, asRemote, { now: NOW });
@@ -840,6 +954,11 @@ describe("merge: never loses local data", () => {
     expect(second.local.watchLog["2026-07-01"]).toHaveLength(1);
     expect(second.push.watch_events).toHaveLength(0);
     expect(second.summary.noteConcatenations).toHaveLength(0);
+    // home_config replays as the identical value — pushed again (the merge
+    // always pushes the resolved value back, matching xp_state's own
+    // idempotent-push shape), but never duplicated or altered.
+    expect(second.local.homeConfig).toEqual(first.local.homeConfig);
+    expect(second.push.home_config[0]?.config).toMatchObject({ firstPage: "library" });
   });
 });
 

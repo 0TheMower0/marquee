@@ -1,6 +1,7 @@
 "use client";
 
 import type { MediaType } from "@/lib/content/types";
+import type { HomeConfig } from "@/lib/home/types";
 import type { RatingEntry } from "@/lib/ratings/types";
 import type { TrackingEntry, WatchedEpisodes } from "@/lib/tracking/types";
 import { addedEpisodes } from "@/lib/watchlog/diff";
@@ -11,6 +12,7 @@ import {
   episodeRowKey,
   episodeTombstoneRow,
   episodesToRows,
+  homeConfigToRow,
   ratingToNoteRow,
   ratingToScoreRow,
   titleRowKey,
@@ -216,4 +218,18 @@ export async function recordHighestLevel(level: number): Promise<void> {
     { user_id: userId, highest_level_seen: level },
     new Date(),
   );
+}
+
+/* ---------------------------------------------------------------------------
+ * Home customization (Phase 8 Step 2)
+ * ------------------------------------------------------------------------ */
+
+/** `config.updatedAt` drives the enqueue's own conflict clock, matching every
+ *  other recorder here — the outbox key is `userId` (one settings row per
+ *  user, same as `recordHighestLevel`), so repeated edits before the next
+ *  flush coalesce into the latest one rather than queuing a write per click. */
+export async function recordHomeConfig(config: HomeConfig): Promise<void> {
+  const userId = active();
+  if (!userId) return;
+  await enqueue("home_config", userId, homeConfigToRow(userId, config), config.updatedAt);
 }

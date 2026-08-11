@@ -1,4 +1,5 @@
 import type { MediaType } from "@/lib/content/types";
+import type { HomeConfig } from "@/lib/home/types";
 import type { RatingEntry } from "@/lib/ratings/types";
 import { normalizeRanges } from "@/lib/tracking/ranges";
 import type { TrackingEntry, TrackingStatus, WatchedEpisodes } from "@/lib/tracking/types";
@@ -7,6 +8,7 @@ import type { DayKey, WatchEvent, WatchLogDay } from "@/lib/watchlog/types";
 import { preAccountEventId } from "./uuid";
 import type {
   BadgeEarnedRow,
+  HomeConfigRow,
   RatingNoteRow,
   RatingRow,
   TrackedTitleRow,
@@ -16,10 +18,12 @@ import type {
 } from "./types";
 import {
   episodesToRows,
+  homeConfigToRow,
   maxStatus,
   parseTitleKey,
   ratingToNoteRow,
   ratingToScoreRow,
+  rowToHomeConfig,
   rowToWatchEvent,
   rowsToWatchedEpisodes,
   titleRowKey,
@@ -75,6 +79,10 @@ export interface LocalSnapshot {
   watchLog: Record<DayKey, WatchLogDay>;
   badges: Record<string, { earnedAt: Date }>;
   highestLevelSeen: number;
+  /** Null when nothing has ever been saved locally — genuinely absent, not
+   *  "the default", so the merge can tell "never touched" apart from "set to
+   *  what the default happens to be". */
+  homeConfig: HomeConfig | null;
 }
 
 export interface RemoteSnapshot {
@@ -85,6 +93,7 @@ export interface RemoteSnapshot {
   watchEvents: WatchEventRow[];
   badges: BadgeEarnedRow[];
   xp: XpStateRow | null;
+  homeConfig: HomeConfigRow | null;
 }
 
 export function emptyRemoteSnapshot(): RemoteSnapshot {
@@ -96,6 +105,7 @@ export function emptyRemoteSnapshot(): RemoteSnapshot {
     watchEvents: [],
     badges: [],
     xp: null,
+    homeConfig: null,
   };
 }
 
@@ -167,6 +177,7 @@ export interface MergePlan {
     watch_events: WatchEventRow[];
     badges_earned: BadgeEarnedRow[];
     xp_state: XpStateRow[];
+    home_config: HomeConfigRow[];
   };
   /** The full local state after the merge. Written wholesale, not diffed. */
   local: {
@@ -175,6 +186,9 @@ export interface MergePlan {
     watchLog: Record<DayKey, WatchLogDay>;
     badges: Record<string, { earnedAt: Date }>;
     highestLevelSeen: number;
+    /** Null when NEITHER side had ever saved one — writing the default here
+     *  would fabricate an edit that never happened. See the merge rule below. */
+    homeConfig: HomeConfig | null;
   };
   summary: MergeSummary;
 }
@@ -612,6 +626,25 @@ export async function buildMergePlan(
     remote.xp?.highest_level_seen ?? 1,
   );
 
+  /* ----- home_config: newer client_updated_at wins, WHOLESALE ------------
+   *
+   * No union — see the migration's header comment for why an arbitrary
+   * preference blob has no honest merge. "Newer wins" needs both sides to
+   * have SOMETHING to compare; if only one side has ever saved a config, that
+   * side wins outright regardless of timestamp, because the other side has
+   * nothing to compare against — not "loses the comparison", genuinely
+   * absent from it.
+   *
+   * The merged value is always the one pushed back, even when remote already
+   * held the newer copy — same idempotent-push shape `xp_state` already uses
+   * above. Pushing the same value back with its own timestamp is a no-op the
+   * LWW trigger accepts harmlessly (equal is not less-than), and it is what
+   * keeps this rule this simple: no branch that conditionally skips a push.
+   */
+  const remoteHomeConfig = remote.homeConfig ? rowToHomeConfig(remote.homeConfig) : null;
+  const homeConfig = pickNewerHomeConfig(local.homeConfig, remoteHomeConfig);
+  const pushHomeConfig = homeConfig ? [homeConfigToRow(userId, homeConfig)] : [];
+
   return {
     push: {
       tracked_titles: pushTitles,
@@ -621,6 +654,7 @@ export async function buildMergePlan(
       watch_events: pushEvents,
       badges_earned: pushBadges,
       xp_state: [{ user_id: userId, highest_level_seen: highestLevelSeen }],
+      home_config: pushHomeConfig,
     },
     local: {
       tracking: mergedTracking,
@@ -628,9 +662,19 @@ export async function buildMergePlan(
       watchLog: mergedLog,
       badges: mergedBadges,
       highestLevelSeen,
+      homeConfig,
     },
     summary,
   };
+}
+
+/** Null beats nothing, not the other way round — an untouched side has no
+ *  timestamp to lose a comparison with. Ties favour `local` deliberately:
+ *  arbitrary, but deterministic, and this rule only ever ties in a test. */
+function pickNewerHomeConfig(local: HomeConfig | null, remote: HomeConfig | null): HomeConfig | null {
+  if (!local) return remote;
+  if (!remote) return local;
+  return remote.updatedAt.getTime() > local.updatedAt.getTime() ? remote : local;
 }
 
 function remoteRowToEntry(

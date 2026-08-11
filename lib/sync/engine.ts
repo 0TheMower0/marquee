@@ -1,6 +1,7 @@
 "use client";
 
 import { badgesEarnedStore } from "@/lib/badges/store";
+import { getHomeConfig, setHomeConfig } from "@/lib/home/store";
 import { ratingsStore } from "@/lib/ratings/store";
 import { trackingStore } from "@/lib/tracking/store";
 import { watchLogStore } from "@/lib/watchlog/store";
@@ -29,6 +30,7 @@ import { getCursor, getMergeRecord, getSyncNotes, setCursor, setMergeRecord } fr
 import {
   SYNC_TABLES,
   type BadgeEarnedRow,
+  type HomeConfigRow,
   type OutboxEntry,
   type RatingNoteRow,
   type RatingRow,
@@ -40,7 +42,7 @@ import {
   type XpStateRow,
 } from "./types";
 import { outboxKey } from "./outbox";
-import { rowToWatchEvent, titleRowKey } from "./wire";
+import { rowToHomeConfig, rowToWatchEvent, titleRowKey } from "./wire";
 
 /**
  * Orchestration: the first-login merge, the outbox flush, and the pull.
@@ -133,7 +135,7 @@ async function applyMergeLocally(plan: MergePlan): Promise<void> {
  * ------------------------------------------------------------------------ */
 
 export async function fetchRemoteSnapshot(backend: SyncBackend): Promise<RemoteSnapshot> {
-  const [trackedTitles, watchedEpisodes, ratings, ratingNotes, watchEvents, badges, xp] =
+  const [trackedTitles, watchedEpisodes, ratings, ratingNotes, watchEvents, badges, xp, homeConfig] =
     await Promise.all([
       backend.pull<TrackedTitleRow>("tracked_titles", null),
       backend.pull<WatchedEpisodeRow>("watched_episodes", null),
@@ -142,6 +144,7 @@ export async function fetchRemoteSnapshot(backend: SyncBackend): Promise<RemoteS
       backend.pull<WatchEventRow>("watch_events", null),
       backend.pull<BadgeEarnedRow>("badges_earned", null),
       backend.pull<XpStateRow>("xp_state", null),
+      backend.pull<HomeConfigRow>("home_config", null),
     ]);
 
   return {
@@ -152,6 +155,7 @@ export async function fetchRemoteSnapshot(backend: SyncBackend): Promise<RemoteS
     watchEvents,
     badges,
     xp: xp[0] ?? null,
+    homeConfig: homeConfig[0] ?? null,
   };
 }
 
@@ -271,6 +275,8 @@ function newestCursorValue(table: SyncTable, remote: RemoteSnapshot): string | n
         return remote.badges.map((row) => row.updated_at);
       case "xp_state":
         return remote.xp ? [remote.xp.updated_at] : [];
+      case "home_config":
+        return remote.homeConfig ? [remote.homeConfig.updated_at] : [];
     }
   })();
 
@@ -525,6 +531,30 @@ export async function pullChanges(userId: string, backend: SyncBackend): Promise
     }
   }
   await advanceCursor(userId, "xp_state", xpRows.map((r) => r.updated_at));
+
+  /* ----- home_config: newer client_updated_at wins, wholesale ------------
+   *
+   * Same rule as the first-login merge's `pickNewerHomeConfig` — no union,
+   * because an arbitrary preference blob has no honest union. Unlike the
+   * merge, this compares against local's OWN `updatedAt` rather than trusting
+   * the pull alone: a pending outbox write for home_config (this device
+   * mid-edit, not yet pushed) must not be clobbered by an older remote row
+   * arriving on the same pull. Same pending-write guard every other
+   * reconcile function in this file already applies.
+   */
+  const homeConfigRows = await backend.pull<HomeConfigRow>(
+    "home_config",
+    await getCursor(userId, "home_config"),
+  );
+  if (homeConfigRows.length > 0) {
+    const remoteConfig = rowToHomeConfig(homeConfigRows[homeConfigRows.length - 1]);
+    const localConfig = await getHomeConfig();
+    if (remoteConfig && (!localConfig || remoteConfig.updatedAt > localConfig.updatedAt)) {
+      await setHomeConfig(remoteConfig);
+      applied += 1;
+    }
+  }
+  await advanceCursor(userId, "home_config", homeConfigRows.map((r) => r.updated_at));
 
   if (applied > 0) announceLocalChange();
   return applied;

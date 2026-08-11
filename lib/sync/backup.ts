@@ -1,4 +1,5 @@
 import { badgesEarnedStore } from "@/lib/badges/store";
+import { getHomeConfig, setHomeConfig } from "@/lib/home/store";
 import { ratingsStore } from "@/lib/ratings/store";
 import { defineStore } from "@/lib/storage";
 import { trackingStore } from "@/lib/tracking/store";
@@ -69,19 +70,29 @@ export const backupStore = defineStore<BackupRecord>({
  * a different view of the data than the merge operates on.
  */
 export async function captureLocalSnapshot(): Promise<LocalSnapshot> {
-  const [tracking, ratings, watchLog, badges, highestLevelSeen] = await Promise.all([
+  const [tracking, ratings, watchLog, badges, highestLevelSeen, homeConfig] = await Promise.all([
     trackingStore.getAll(),
     ratingsStore.getAll(),
     watchLogStore.getAll(),
     badgesEarnedStore.getAll(),
     getHighestLevelSeen(),
+    getHomeConfig(),
   ]);
 
-  return { tracking, ratings, watchLog, badges, highestLevelSeen };
+  return { tracking, ratings, watchLog, badges, highestLevelSeen, homeConfig };
 }
 
-/** True when there is nothing on this device worth merging. Drives the §6.6
- *  "run automatically vs. ask first" decision. */
+/**
+ * True when there is nothing on this device worth merging. Drives the §6.6
+ * "run automatically vs. ask first" decision.
+ *
+ * `homeConfig` is deliberately NOT part of this check. §6.6's gate exists to
+ * catch the one irreversible risk in this design — uploading a library into
+ * the wrong account — and a UI preference carries none of that risk. A device
+ * with nothing but a customized Home should still merge automatically, not
+ * surface the "are you sure this is the right account" prompt over a section
+ * order.
+ */
 export function isSnapshotEmpty(snapshot: LocalSnapshot): boolean {
   return (
     Object.keys(snapshot.tracking).length === 0 &&
@@ -163,6 +174,13 @@ export async function restoreSnapshot(snapshot: LocalSnapshot): Promise<void> {
     await badgesEarnedStore.set(badgeId, record);
   }
   await seenLevelStore.set("seen", { highestLevelSeen: snapshot.highestLevelSeen });
+  // Only restored when the snapshot actually held one — a null here means
+  // "never touched", and writing DEFAULT_HOME_CONFIG over whatever the
+  // current device has would restore a preference that was never set,
+  // rather than genuinely undoing anything.
+  if (snapshot.homeConfig) {
+    await setHomeConfig(snapshot.homeConfig);
+  }
 }
 
 /* ---------------------------------------------------------------------------
