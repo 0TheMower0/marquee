@@ -9,7 +9,10 @@ import type {
 import type { RatingEntry } from "@/lib/ratings/types";
 import { WATCH_KIND, type WatchEvent } from "@/lib/watchlog/types";
 
+import { isHomeConfig, type HomeConfig } from "@/lib/home/types";
+
 import type {
+  HomeConfigRow,
   RatingNoteRow,
   RatingRow,
   TrackedTitleRow,
@@ -345,4 +348,42 @@ export const STATUS_RANK: Record<TrackingStatus, number> = {
 
 export function maxStatus(a: TrackingStatus, b: TrackingStatus): TrackingStatus {
   return STATUS_RANK[a] >= STATUS_RANK[b] ? a : b;
+}
+
+/* ---------------------------------------------------------------------------
+ * home_config
+ *
+ * Unlike `xp_state`/`badges_earned` (a bare integer, converted inline where
+ * it's used), this gets real translation functions here — `config` is a
+ * jsonb column reachable directly through PostgREST, exactly as untrusted as
+ * any other server input, and `isHomeConfig` is real validation logic worth
+ * centralizing and unit-testing rather than inlining at each call site.
+ * ------------------------------------------------------------------------ */
+
+export function homeConfigToRow(userId: string, config: HomeConfig): HomeConfigRow {
+  // `updatedAt` is excluded from the jsonb payload deliberately — it already
+  // has a first-class column (`client_updated_at`), and storing the same
+  // instant twice would let the two silently disagree after a hand migration
+  // of the local record.
+  const { updatedAt, ...payload } = config;
+  return {
+    user_id: userId,
+    config: payload,
+    client_updated_at: updatedAt.toISOString(),
+  };
+}
+
+/**
+ * Returns `null` for a `config` that doesn't validate, rather than throwing.
+ * A malformed row here is a corrupt or hand-edited jsonb cell reachable
+ * through the public API — the same trust level as any other server
+ * response — and a reader receiving `null` is expected to fall back to
+ * `DEFAULT_HOME_CONFIG`, never to crash the settings page over it.
+ */
+export function rowToHomeConfig(row: HomeConfigRow): HomeConfig | null {
+  const candidate = {
+    ...(typeof row.config === "object" && row.config !== null ? row.config : {}),
+    updatedAt: new Date(row.client_updated_at),
+  };
+  return isHomeConfig(candidate) ? candidate : null;
 }

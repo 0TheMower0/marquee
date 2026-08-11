@@ -27,6 +27,7 @@ const CONFLICT_TARGET: Record<SyncTable, string> = {
   watch_events: "id",
   badges_earned: "user_id,badge_id",
   xp_state: "user_id",
+  home_config: "user_id",
 };
 
 /**
@@ -47,6 +48,7 @@ const CURSOR_COLUMN: Record<SyncTable, string> = {
   watch_events: "updated_at",
   badges_earned: "updated_at",
   xp_state: "updated_at",
+  home_config: "updated_at",
 };
 
 /** Postgres has a parameter ceiling per statement and PostgREST bodies are not

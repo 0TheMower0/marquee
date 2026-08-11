@@ -104,6 +104,21 @@ export type XpStateRow = {
 }
 
 /**
+ * Phase 8 Step 2. `config` is opaque `unknown` here on purpose — this file's
+ * job is the WIRE shape, and the wire shape of a jsonb column is "whatever is
+ * in it". `lib/home/types.ts` owns validating and defaulting the actual
+ * `HomeConfig` shape; keeping that knowledge out of this file is what lets
+ * the local config grow a field with a `lib/storage` migration alone, with
+ * no SQL migration and no change here.
+ */
+export type HomeConfigRow = {
+  user_id: string;
+  config: unknown;
+  client_updated_at: string;
+  updated_at?: string;
+}
+
+/**
  * The tables the sync loop touches, in **dependency order**.
  *
  * The order is load-bearing on push: `watched_episodes` has a foreign key to
@@ -119,6 +134,10 @@ export const SYNC_TABLES = [
   "watch_events",
   "badges_earned",
   "xp_state",
+  // Phase 8 Step 2. No FK relationship to anything above — independent state,
+  // like xp_state — so its position in this dependency-ordered list doesn't
+  // matter beyond "after the tables it has no relationship to".
+  "home_config",
 ] as const;
 
 export type SyncTable = (typeof SYNC_TABLES)[number];
