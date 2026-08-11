@@ -1,4 +1,5 @@
 import { defineStore } from "@/lib/storage";
+import { recordHomeConfig } from "@/lib/sync/record";
 
 import { isHomeConfig, type HomeConfig } from "./types";
 
@@ -26,6 +27,20 @@ export async function getHomeConfig(): Promise<HomeConfig | null> {
   return homeConfigStore.get(KEY);
 }
 
+/**
+ * The UI-facing write path — settings screens call this. It queues an
+ * outbox write after the local write succeeds (same "local first, always"
+ * rule as every other recorder in lib/sync/record.ts).
+ *
+ * The sync engine's own pull-apply and restore-from-backup paths do NOT go
+ * through this function — they write straight to `homeConfigStore` (see
+ * lib/sync/engine.ts and lib/sync/backup.ts), the same way
+ * `lib/xp/store.ts`'s `seenLevelStore` is written directly from those two
+ * call sites. Routing a just-pulled or just-restored value back through this
+ * function would re-enqueue it right back into the outbox it came from (or,
+ * for restore, push a value nothing server-side asked for).
+ */
 export async function setHomeConfig(config: HomeConfig): Promise<void> {
   await homeConfigStore.set(KEY, config);
+  void recordHomeConfig(config);
 }

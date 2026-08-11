@@ -1,5 +1,5 @@
 import { badgesEarnedStore } from "@/lib/badges/store";
-import { getHomeConfig, setHomeConfig } from "@/lib/home";
+import { getHomeConfig, homeConfigStore } from "@/lib/home";
 import { ratingsStore } from "@/lib/ratings/store";
 import { defineStore } from "@/lib/storage";
 import { trackingStore } from "@/lib/tracking/store";
@@ -179,7 +179,10 @@ export async function restoreSnapshot(snapshot: LocalSnapshot): Promise<void> {
   // current device has would restore a preference that was never set,
   // rather than genuinely undoing anything.
   if (snapshot.homeConfig) {
-    await setHomeConfig(snapshot.homeConfig);
+    // The raw store, matching every other field restored above — restore is
+    // a local-only correction, not a fresh edit to push, same reasoning as
+    // seenLevelStore.set(...) one line up.
+    await homeConfigStore.set("config", snapshot.homeConfig);
   }
 }
 

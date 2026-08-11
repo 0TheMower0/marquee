@@ -1,5 +1,12 @@
 import type { MediaType } from "@/lib/content/types";
-import { isHomeConfig, type HomeConfig } from "@/lib/home";
+// Sub-path, not the @/lib/home barrel — matching every other cross-domain
+// import in this file (tracking/ratings/watchlog all import their /types
+// sub-path too), and for a load-bearing reason here specifically: the
+// barrel re-exports lib/home/store.ts, which imports recordHomeConfig from
+// @/lib/sync/record, which imports THIS file. Importing the barrel here
+// would close that cycle for real; /types has no path back into lib/sync at
+// all, so there is no cycle to reason about in the first place.
+import { isHomeConfig, type HomeConfig } from "@/lib/home/types";
 import { normalizeRanges } from "@/lib/tracking/ranges";
 import type {
   EpisodeRange,

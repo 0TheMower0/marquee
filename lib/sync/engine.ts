@@ -1,7 +1,7 @@
 "use client";
 
 import { badgesEarnedStore } from "@/lib/badges/store";
-import { getHomeConfig, setHomeConfig } from "@/lib/home";
+import { getHomeConfig, homeConfigStore } from "@/lib/home";
 import { ratingsStore } from "@/lib/ratings/store";
 import { trackingStore } from "@/lib/tracking/store";
 import { watchLogStore } from "@/lib/watchlog/store";
@@ -550,7 +550,11 @@ export async function pullChanges(userId: string, backend: SyncBackend): Promise
     const remoteConfig = rowToHomeConfig(homeConfigRows[homeConfigRows.length - 1]);
     const localConfig = await getHomeConfig();
     if (remoteConfig && (!localConfig || remoteConfig.updatedAt > localConfig.updatedAt)) {
-      await setHomeConfig(remoteConfig);
+      // The raw store, not setHomeConfig() — this value just came FROM the
+      // outbox's own remote counterpart, so pushing it back would only
+      // re-queue what the server already has. Same reasoning as xp_state's
+      // seenLevelStore.set(...) two blocks up.
+      await homeConfigStore.set("config", remoteConfig);
       applied += 1;
     }
   }
