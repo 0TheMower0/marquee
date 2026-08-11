@@ -1,7 +1,7 @@
 import { defineStore } from "@/lib/storage";
 import { recordHomeConfig } from "@/lib/sync/record";
 
-import { isHomeConfig, type HomeConfig } from "./types";
+import { HOME_CONFIG_KEY, HOME_CONFIG_NAMESPACE, isHomeConfig, type HomeConfig } from "./types";
 
 /**
  * One record, same "single scalar still goes through `defineStore`" reasoning
@@ -15,16 +15,14 @@ import { isHomeConfig, type HomeConfig } from "./types";
  * migration here, not a new server column.
  */
 export const homeConfigStore = defineStore<HomeConfig>({
-  namespace: "home-config",
+  namespace: HOME_CONFIG_NAMESPACE,
   version: 1,
   migrations: {},
   validate: isHomeConfig,
 });
 
-const KEY = "config";
-
 export async function getHomeConfig(): Promise<HomeConfig | null> {
-  return homeConfigStore.get(KEY);
+  return homeConfigStore.get(HOME_CONFIG_KEY);
 }
 
 /**
@@ -41,6 +39,6 @@ export async function getHomeConfig(): Promise<HomeConfig | null> {
  * for restore, push a value nothing server-side asked for).
  */
 export async function setHomeConfig(config: HomeConfig): Promise<void> {
-  await homeConfigStore.set(KEY, config);
+  await homeConfigStore.set(HOME_CONFIG_KEY, config);
   void recordHomeConfig(config);
 }

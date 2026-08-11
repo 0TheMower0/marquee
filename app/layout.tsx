@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Bebas_Neue, Inter } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 import { BottomNav } from "@/components/shell/bottom-nav";
@@ -13,6 +14,7 @@ import { ServiceWorkerRegistration } from "@/components/pwa/service-worker-regis
 import { UpdatePrompt } from "@/components/pwa/update-prompt";
 import { StorageBanner } from "@/components/storage/storage-banner";
 import { MergePrompt } from "@/components/sync/merge-prompt";
+import { buildFirstPageRedirectScript } from "@/lib/home/redirect-script";
 import { RatingsProvider } from "@/lib/ratings";
 import { SyncProvider } from "@/lib/sync";
 import { TrackingProvider } from "@/lib/tracking";
@@ -89,6 +91,17 @@ export default function RootLayout({
       className={`${bebas.variable} ${inter.variable} h-full antialiased`}
     >
       <body className="bg-ink text-fg min-h-full">
+        {/* Phase 8 Step 2. A COLD load of "/" only — see the doc comment on
+            buildFirstPageRedirectScript for why this has to be raw,
+            synchronous script text reading localStorage directly rather than
+            a React effect: `beforeInteractive` runs before hydration, before
+            there is a React tree for an effect to belong to. In-app <Link>
+            navigation to Home never re-triggers this — the App Router never
+            reloads the document for a client-side navigation, and this
+            script only ever runs on an actual document load. */}
+        <Script id="first-page-redirect" strategy="beforeInteractive">
+          {buildFirstPageRedirectScript()}
+        </Script>
         {/* Server-rendered, hidden by CSS once HydrationFlag marks the
             document hydrated. This is the ONLY warning in the app that
             survives client JS never running — every other diagnostic is a

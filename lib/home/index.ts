@@ -7,6 +7,7 @@ export { getHomeConfig, homeConfigStore, setHomeConfig } from "./store";
 export {
   DEFAULT_HOME_CONFIG,
   FIRST_PAGE_PATH,
+  HOME_CONFIG_KEY,
   isHomeConfig,
   moveSection,
   toggleSection,

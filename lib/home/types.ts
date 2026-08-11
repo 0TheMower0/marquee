@@ -9,6 +9,16 @@
  * "config explicitly set to the default".
  */
 
+/**
+ * The namespace/key `lib/home/store.ts` writes to, exported (rather than
+ * left as a private literal there) so the cold-load first-page redirect
+ * script (`redirect-script.ts`, built at Server render time in
+ * app/layout.tsx) can compute the exact same localStorage key without a
+ * second hardcoded copy that could silently drift from a rename.
+ */
+export const HOME_CONFIG_NAMESPACE = "home-config";
+export const HOME_CONFIG_KEY = "config";
+
 /** The four routes worth opening to. Deliberately NOT Profile — a "first
  *  page" is where you land to DO something (watch, find, track), not the
  *  account/stats surface. */

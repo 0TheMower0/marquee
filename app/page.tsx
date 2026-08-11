@@ -1,7 +1,8 @@
 import { Suspense } from "react";
 
 import { ContentErrorState } from "@/components/content/content-error-state";
-import { StreakBadge } from "@/components/streak/streak-badge";
+import { HeaderStreakBadge } from "@/components/home/header-streak-badge";
+import { HomeSections } from "@/components/home/home-sections";
 import { TitleGrid } from "@/components/title/title-grid";
 import { UpNextRail } from "@/components/tracking/up-next-rail";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -74,26 +75,33 @@ export default function HomePage() {
 
         {/* Client-rendered for the same reason UpNextRail below is — tracking
             data only exists in this browser's storage. Renders null when
-            there's no active streak, so Home is unchanged for a new user. */}
-        <StreakBadge />
+            there's no active streak (or when Settings has turned the badge
+            off), so Home is unchanged for a new user. */}
+        <HeaderStreakBadge />
       </header>
 
-      {/* Client-rendered — tracking data lives only in this browser's
-          storage, so a Server Component has nothing to fetch it with.
-          Renders null when there's nothing "watching" to show, so Home is
-          visually unchanged for a user with no shows in progress. */}
-      <div className="mt-8">
-        <UpNextRail />
-      </div>
-
-      {/* The header paints immediately and the grid streams in behind it.
-          Without this boundary the whole route would block on the provider,
-          including in mock mode, which simulates latency deliberately. */}
-      <section className="mt-8">
-        <Suspense fallback={<SkeletonGrid count={10} />}>
-          <TrendingGrid />
-        </Suspense>
-      </section>
+      {/* Phase 8 Step 2. Order and visibility are a per-user preference
+          (lib/home), so the two slots below are handed to a Client Component
+          that decides where each one sits — the fetch-and-render Server
+          Component underneath (TrendingGrid, still awaited server-side
+          behind its own Suspense boundary) doesn't need to know it's
+          reorderable at all. */}
+      <HomeSections
+        slots={{
+          upNext: <UpNextRail />,
+          // The header paints immediately and the grid streams in behind
+          // it. Without this boundary the whole route would block on the
+          // provider, including in mock mode, which simulates latency
+          // deliberately.
+          trending: (
+            <section>
+              <Suspense fallback={<SkeletonGrid count={10} />}>
+                <TrendingGrid />
+              </Suspense>
+            </section>
+          ),
+        }}
+      />
     </div>
   );
 }

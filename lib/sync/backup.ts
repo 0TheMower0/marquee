@@ -1,5 +1,5 @@
 import { badgesEarnedStore } from "@/lib/badges/store";
-import { getHomeConfig, homeConfigStore } from "@/lib/home";
+import { getHomeConfig, HOME_CONFIG_KEY, homeConfigStore } from "@/lib/home";
 import { ratingsStore } from "@/lib/ratings/store";
 import { defineStore } from "@/lib/storage";
 import { trackingStore } from "@/lib/tracking/store";
@@ -182,7 +182,7 @@ export async function restoreSnapshot(snapshot: LocalSnapshot): Promise<void> {
     // The raw store, matching every other field restored above — restore is
     // a local-only correction, not a fresh edit to push, same reasoning as
     // seenLevelStore.set(...) one line up.
-    await homeConfigStore.set("config", snapshot.homeConfig);
+    await homeConfigStore.set(HOME_CONFIG_KEY, snapshot.homeConfig);
   }
 }
 

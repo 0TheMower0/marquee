@@ -81,6 +81,10 @@ const CACHEABLE_ROUTES = [
   // is no user data in the HTML. Genuinely useful offline, which is the
   // point of caching it rather than merely the permission to.
   "/profile/year",
+  // Phase 8 Step 2. Static and identical for every visitor — lib/home's
+  // config is read from this browser's own storage client-side, same as
+  // /library and /schedule; there is no per-user data in the HTML itself.
+  "/settings",
   "/forgot-password",
   "/offline",
 ];

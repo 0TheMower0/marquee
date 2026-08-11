@@ -32,6 +32,16 @@ export function ProfileView() {
           <Button href="/profile/stats" variant="outline" size="sm">
             Full stats
           </Button>
+          {/* Phase 8 Step 2. Ghost, not outline — it's a lower-priority exit
+              from this page rather than a third thing to look at, the same
+              weighting the two stats buttons above already establish
+              relative to each other. Not a 5th NAV_ITEMS entry; every other
+              rarely-visited route in this app (/lists, /schedule,
+              /notifications) is reached the same way, from the page it's
+              most contextually relevant to. */}
+          <Button href="/settings" variant="ghost" size="sm">
+            Settings
+          </Button>
         </div>
       </div>
 
