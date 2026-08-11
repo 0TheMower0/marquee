@@ -1,4 +1,5 @@
 import { SkeletonGrid } from "@/components/ui/skeleton";
+import { TITLE_PAGE_SIZE } from "@/lib/utils/grid";
 
 /**
  * Route-level fallback, distinct from the Suspense boundary inside page.tsx.
@@ -23,7 +24,7 @@ export default function HomeLoading() {
       </header>
 
       <section className="mt-8">
-        <SkeletonGrid count={10} />
+        <SkeletonGrid count={TITLE_PAGE_SIZE} />
       </section>
     </div>
   );

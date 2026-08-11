@@ -27,10 +27,22 @@ export function UpNextRail() {
     markEpisodeWatched,
   } = useUpNextItems();
 
-  // Nothing tracked yet AND still loading both read as "no watching shows"
-  // here — see the doc comment on `hasWatchingShows` in the hook for why
-  // that's the correct read rather than an ambiguous one.
-  if (!settled) return hasWatchingShows ? <UpNextRailSkeleton /> : null;
+  // ALWAYS a skeleton while unsettled, never `null` — this reserves the slot's
+  // height, and that is what fixes Home's layout shift.
+  //
+  // It used to return null when there were no watching shows, on the reasoning
+  // that a visitor with nothing tracked should see nothing. But this rail
+  // renders SOMETHING in every settled state (the rail, or the "Nothing in
+  // progress" empty state), so `null` was never the final answer — it was a
+  // temporary zero-height hole that filled in once localStorage resolved,
+  // shoving the entire trending grid below it down the page.
+  //
+  // Measured from the Lighthouse trace rather than guessed at, after two wrong
+  // hypotheses (skeleton card count, then font swap) each disproved by the
+  // number not moving: the trending section jumped from y=147 to y=497 — 350px,
+  // the height of this slot appearing — for a cumulative layout shift of 0.645
+  // against a 0.1 "good" threshold.
+  if (!settled) return <UpNextRailSkeleton />;
 
   const nothingToShow = ready.length === 0 && upcoming.length === 0;
 

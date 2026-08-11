@@ -32,7 +32,13 @@ export function ContinueWatchingSection() {
     markEpisodeWatched,
   } = useUpNextItems();
 
-  if (!settled) return hasWatchingShows ? <ContinueWatchingSkeleton /> : null;
+  // Always a skeleton while unsettled, never `null` — same reasoning as
+  // UpNextRail, which shares this hook: every settled state renders
+  // something, so `null` is a temporary zero-height hole that shoves whatever
+  // follows down the page when storage resolves. Library measured 0 CLS today
+  // only because of what happens to sit below it; the latent shift is the
+  // same one that cost Home 0.645.
+  if (!settled) return <ContinueWatchingSkeleton />;
 
   const nothingToShow = ready.length === 0 && upcoming.length === 0;
 

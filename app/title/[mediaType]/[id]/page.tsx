@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FilmIcon } from "@/components/ui/icons";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tabs,
   TabsList,
@@ -392,7 +393,12 @@ export default async function TitleDetailPage({
             above it, which need no server at all. */}
         {mediaType === "tv" && (
           <div className="mt-4">
-            <Suspense fallback={null}>
+            {/* A sized fallback, not `null`. A zero-height fallback that later
+                fills in is a layout shift by construction — it is the same
+                mistake UpNextRail made on Home, which cost 0.645 CLS there.
+                The skeleton matches the rendered control's height so the slot
+                is reserved from the first paint. */}
+            <Suspense fallback={<Skeleton className="h-9 w-40 rounded-sm" />}>
               <FollowShowSection showId={title.id} />
             </Suspense>
           </div>

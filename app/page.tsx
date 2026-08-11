@@ -11,6 +11,7 @@ import { SkeletonGrid } from "@/components/ui/skeleton";
 import { getContentProvider } from "@/lib/content";
 import { ContentError } from "@/lib/content/errors";
 import type { PagedResult, TitleSummary } from "@/lib/content/types";
+import { TITLE_PAGE_SIZE } from "@/lib/utils/grid";
 
 /**
  * `mediaType: "all"` on purpose. Films and series share one rail rather than
@@ -95,7 +96,7 @@ export default function HomePage() {
           // deliberately.
           trending: (
             <section>
-              <Suspense fallback={<SkeletonGrid count={10} />}>
+              <Suspense fallback={<SkeletonGrid count={TITLE_PAGE_SIZE} />}>
                 <TrendingGrid />
               </Suspense>
             </section>
