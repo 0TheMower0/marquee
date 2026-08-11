@@ -41,3 +41,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# NOTE: `vercel link` appends its own `.vercel` and `.env*` here. Both are
+# already covered above, and re-adding `.env*` AFTER the `!.env.example`
+# negation on line 36 silently un-ignores the committed template — gitignore
+# resolves by LAST matching pattern, so the later blanket rule wins. It looks
+# harmless because `git check-ignore` reports the tracked file as not ignored;
+# untracked, it is. If the CLI adds them again, delete them again.
