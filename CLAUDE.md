@@ -1524,7 +1524,7 @@ wrong, verify what the row you're writing actually contains first.
 | 5 *(done)* | XP, levels, streaks, badges, stats dashboard; PWA manifest + service worker |
 | 6 *(done)* | API rate limiting, Supabase accounts + sync, spoiler-safe comments, shared lists — design in `docs/phase-6-sync-design.md` |
 | **7** *(done)* | CSV importers (IMDb, Letterboxd, Trakt; TV Time deliberately skipped), the new-episode feed, new-episode push notifications — designs in `docs/phase-7-import-design.md` and `docs/phase-7-notifications-design.md` |
-| **8** *(current)* | Year in Review — rolling 12-month deck with an on-device share image |
+| **8** *(current)* | Year in Review; Home customization — reorderable sections, first-page picker |
 
 **Do not build ahead of the current phase.** Architect so later phases slot in;
 do not implement them early.
@@ -3932,6 +3932,156 @@ not erode.
         true on this machine, so invoking it would open a modal that hangs the
         automation session. The render, the blob, the dimensions and the
         download fallback are all exercised; the hand-off to the OS is not.
+- [x] **Step 2** — Home customization (`lib/home/`, `components/home/`,
+      `components/settings/`, `app/settings/`). Moviebase paywalls exactly
+      this; here it's Settings. Reorder/hide Home's two sections (Up Next,
+      Trending), pick the app's first page (Home/Library/Schedule/Search),
+      toggle the streak badge. Synced like everything else in this app —
+      `home_config` is the 8th table through the Phase 6 sync pipeline.
+      - **Native home-screen widgets need a native app, not a PWA — asked and
+        answered rather than silently skipped.** No web API lets a PWA render
+        live content on the OS home screen itself. The honest web equivalent
+        is the **Badging API** (`navigator.setAppBadge()`) — a small count on
+        the app icon, the closest thing the web platform actually offers.
+        **Deliberately deferred, not built now**: keeping a badge accurate
+        while the app is CLOSED needs code running with the app closed, and
+        this codebase already has exactly one thing that does that — the
+        Phase 7 Step 5 Web Push `push` handler in `public/sw.js`, which
+        already runs a service worker wake-up per notification and already
+        sets a *notification's own* `badge:` icon (a different, unrelated
+        field). A future step calling `self.registration.setAppBadge(n)`
+        inside that SAME handler is real, honest, and nearly free —
+        building any badging infrastructure before Phase 7 Step 5 existed
+        would have meant standing up a service worker wake-up path twice.
+        Tracked as a candidate for whenever push notifications get their
+        next real pass, not this step.
+      - **`HomeConfig` is one preference blob, not per-field records** —
+        `firstPage`, `sections` (order + visibility), `showStreakBadge`, one
+        `updatedAt`. Deliberately the simplest sync rule in the app: *newer
+        `client_updated_at` wins, wholesale* — no field-level union, because
+        an arbitrary preference blob has no honest union (unlike episode
+        ranges, where a union is obviously correct). A dedicated merge test
+        pins that the two sides never blend.
+      - **Excluded from the first-login merge's "are you sure" gate on
+        purpose.** `isSnapshotEmpty()` (design doc §6.6) drives whether the
+        scary "this looks like two different libraries" confirmation
+        appears, and that gate exists for exactly one irreversible risk:
+        uploading a library into the wrong account. A UI preference carries
+        none of that risk, so `homeConfig` doesn't count toward it.
+      - **`setHomeConfig()` — the UI-facing write path — enqueues an outbox
+        write; the sync engine's pull-apply and `restoreSnapshot` do NOT go
+        through it**, writing `homeConfigStore` directly instead, exactly
+        matching how `lib/xp/store.ts`'s `seenLevelStore` is already written
+        directly from those same two call sites. Routing a just-pulled or
+        just-restored value back through the public setter would re-enqueue
+        it right back into the outbox it came from.
+      - **A real circular import, caught before it ever ran wrong.** The
+        barrel `lib/home/index.ts` re-exports `store.ts`, which (once wired
+        for sync) imports `lib/sync/record.ts`, which imports
+        `lib/sync/wire.ts` — and `wire.ts` needed `isHomeConfig` from
+        `lib/home`. Importing the BARREL there would have closed the loop
+        for real. Fixed by having `wire.ts` import `@/lib/home/types`
+        directly instead, which is also simply consistent with how every
+        OTHER cross-domain type in that file is already imported
+        (tracking/ratings/watchlog all use their own `/types` sub-path, not
+        their barrel) — `/types` has no path back into `lib/sync` at all, so
+        there is no cycle to reason about. Verified with real tests and a
+        real `next build`, not just reasoned about — ESM circular imports
+        often "work" by accident when nothing dereferences the loop at
+        module-evaluation time, which is exactly the kind of thing worth not
+        trusting on faith.
+      - **The first-page redirect is a `beforeInteractive` inline script
+        (`lib/home/redirect-script.ts`), not a React effect — has to be.**
+        `beforeInteractive` runs before hydration, before any React tree
+        exists for an effect to belong to, so it reads `localStorage`
+        directly and synchronously, bypassing `lib/storage`'s async driver
+        entirely — awaiting a Promise here would defeat the entire point of
+        running this early. Scoped to `location.pathname === "/"`: App
+        Router client-side `<Link>` navigation never reloads the document,
+        so the script can only run again on a genuine cold load, but a cold
+        load of `/library` directly must not itself bounce anywhere — only a
+        cold load of `/` is "which page did you actually mean to open."
+        Wrapped in one try/catch with no rethrow: blocked or corrupted
+        storage must degrade to staying on Home, never to a thrown error
+        stalling page load.
+      - **The generated script is unit-tested by actually EXECUTING it**,
+        not pattern-matched — `new Function("localStorage", "location",
+        script)` runs the real generated source against fake
+        `localStorage`/`location` objects passed as the function's own
+        parameters, which shadow anything of the same name in the runner's
+        environment regardless of what globals it does or doesn't have. A
+        redirect bug here means every cold open of the app lands somewhere
+        the user didn't choose — worth the strongest coverage available, the
+        same reasoning `public/sw.js`'s `CACHEABLE_ROUTES` guard already
+        applies by parsing the real worker source instead of a hand-copied
+        list.
+      - **`HOME_CONFIG_NAMESPACE`/`HOME_CONFIG_KEY` are exported constants,
+        not a hardcoded string repeated in the redirect script.** The
+        localStorage key the redirect script reads is built from the exact
+        same two exports `lib/home/store.ts` passes to `defineStore` — a
+        rename of either would otherwise silently break the redirect with no
+        error anywhere, since the script has no way to signal "the key I'm
+        reading doesn't exist" versus "nothing is stored yet."
+      - **`HomeSections` (`components/home/`) reorders by real DOM order via
+        a plain `.map()`, never CSS `order`** — `order` only moves pixels; it
+        changes neither tab order nor screen-reader reading order, which
+        would leave both silently mismatched from what's visually on screen
+        the moment a user reorders anything. Takes both sections as
+        already-rendered nodes (`slots: Record<HomeSectionId, ReactNode>`)
+        handed down from `app/page.tsx` — Trending stays exactly what it was
+        (a Server Component streamed behind its own Suspense boundary), Up
+        Next stays a Client Component, and neither needs to know it's
+        reorderable. `HomeSections` itself decides WHERE each one sits,
+        never what's inside it.
+      - **Hiding every section falls through to an `EmptyState`**, not a
+        blank gap under the page header — the same "never blank" rule
+        CLAUDE.md already documents for Search's three states and Up Next's
+        own empty state, applied to a genuinely new way to reach zero
+        visible content. Its action button links back to `/settings`.
+      - **Reached from a "Settings" button on Profile, not a 5th
+        `NAV_ITEMS` entry** — the same placement precedent as `/lists`,
+        `/schedule`, and `/notifications`: a low-frequency route lives on
+        whichever page it's most contextually relevant to, not in the fixed
+        four-item global nav.
+      - **`/settings` classified `cacheable` in `public/sw.js`** — static,
+        identical for every visitor, since `home_config` lives in local
+        storage read client-side, the same reasoning already covering
+        `/library` and `/schedule`. The route-classification guard
+        (`lib/pwa/route-guard.test.ts`, Phase 5 Step 6) failed loudly the
+        moment the route existed and was unclassified, exactly as designed.
+      - **Native `<input type="radio">`/`<input type="checkbox">`
+        throughout the settings screen**, matching every other form control
+        in this app (the rating slider, notification settings) rather than
+        a custom widget — real platform focus rings and touch handling for
+        free, and the first-page picker stays a VISIBLE native radio group
+        rather than a hidden-input-plus-styled-pill pattern specifically so
+        the global `:focus-visible` cyan ring (CLAUDE.md's "Quality floor")
+        lands on something a sighted keyboard user can actually see.
+      - **Optimistic writes with visible rollback** (`useHomeConfig`,
+        `components/home/`), same shape as `lib/tracking/context.tsx`'s
+        `setStatus`: update local state immediately, await the storage
+        write, revert AND surface a transient error banner on failure. Lower
+        stakes than a watch/rating write — a dropped write here costs a
+        misordered Home layout, not lost history — but "a failed write must
+        not render as success" is still the documented rule for this whole
+        storage layer, not a tracking-specific one.
+      - 46 new tests (`lib/home/types.test.ts`, `redirect-script.test.ts`,
+        `lib/sync/wire.test.ts`/`merge.test.ts` additions) — 897 across the
+        suite. Adversarial SQL: `supabase/tests/06_home_config_adversarial.sql`,
+        9 checks against a real PostgreSQL 18 including both novel
+        protections (the clamp, the LWW reject) proven to actually fail when
+        their triggers are removed, then restored and re-confirmed clean.
+      - **Live-verified** against the real dev server (screenshot/pixel
+        tooling was unavailable this session — verified instead via DOM
+        queries and direct `localStorage` reads through the page's own JS
+        context, which if anything pins the actual data contract more
+        precisely than a screenshot would): reordering and hiding sections
+        reflects on Home immediately; hiding both renders the empty state
+        with a working settings link; setting the first page to Library and
+        cold-loading `/` redirects to `/library`; clicking an in-app `<Link>`
+        to Home from another page does **not** redirect, even with a
+        non-Home first page configured; the streak-badge toggle persists and
+        reads back correctly after a reload. Zero console errors throughout.
 
 ---
 
