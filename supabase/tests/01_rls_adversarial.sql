@@ -32,9 +32,15 @@ insert into auth.users (id, email) values
   ('11111111-1111-1111-1111-111111111111', 'alice@example.test'),
   ('22222222-2222-2222-2222-222222222222', 'bob@example.test');
 
-insert into public.profiles (id, display_name) values
-  ('11111111-1111-1111-1111-111111111111', 'Alice'),
-  ('22222222-2222-2222-2222-222222222222', 'Bob');
+-- `username` is NOT NULL as of 20260806000001_usernames.sql. This seed
+-- predates that migration and omitted it, which made the INSERT fail and
+-- aborted this entire file at line 37 — so checks 1-12 below, the ones
+-- covering cross-user reads, private notes, watch history and ownership
+-- hijacking, silently stopped running from Phase 6 Step 4a onward. Nothing
+-- reported it, because these suites are run by hand rather than in CI.
+insert into public.profiles (id, display_name, username) values
+  ('11111111-1111-1111-1111-111111111111', 'Alice', 'alice'),
+  ('22222222-2222-2222-2222-222222222222', 'Bob',   'bob');
 
 insert into public.tracked_titles (user_id, media_type, title_id, status, summary) values
   ('11111111-1111-1111-1111-111111111111', 'movie', 'alice-movie', 'watched',  '{"name":"Alice Movie"}'),

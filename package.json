@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "icons": "node scripts/generate-icons.mjs"
+    "icons": "node scripts/generate-icons.mjs",
+    "test:sql": "bash scripts/run-sql-tests.sh"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
