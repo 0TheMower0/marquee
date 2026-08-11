@@ -33,8 +33,15 @@ const COPY: Record<ContentErrorKind, Copy> = {
     retry: false,
   },
   unauthorized: {
-    title: "Content source rejected us",
-    body: "The content provider refused the request. If you're running in TMDB mode, check that TMDB_READ_ACCESS_TOKEN in .env.local is a valid v4 Read Access Token.",
+    title: "Content source unavailable",
+    // Says nothing about env vars or file paths. This is a SERVER
+    // misconfiguration — our credential, not the reader's — so naming
+    // `TMDB_READ_ACCESS_TOKEN` and `.env.local` (as this used to) put setup
+    // instructions in front of a visitor who cannot act on them and did
+    // nothing wrong. The operator sees the real cause in the server log,
+    // where `handleRouteError` already logs the upstream message; the same
+    // split CLAUDE.md documents for API responses applies to rendered copy.
+    body: "We can't load titles right now. This is a problem on our end, not yours — it should be back shortly.",
     retry: false,
   },
   rate_limited: {

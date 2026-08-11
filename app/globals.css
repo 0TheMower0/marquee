@@ -55,7 +55,24 @@
   /* Slightly warm white — marquee bulbs are tungsten, not LED. */
   --paper-100: #f5f3ef;
   --paper-300: #a8a5a0;
-  --paper-500: #6e6b67;
+  /* Was #6e6b67, which measured 3.71:1 on --bg-base and 3.46:1 on --surface —
+     failing WCAG AA (4.5:1) everywhere it was used, and it is used at 11px
+     (`text-meta-sm`), well under the size that would qualify for the 3:1
+     large-text allowance. Lighthouse flagged it on all four audited pages,
+     including BottomNav's inactive labels (primary navigation on mobile) and
+     the footer's required TMDB attribution link.
+
+     Phase 4 verified the ACCENT tokens rigorously and those still hold —
+     measured worst case 7.77:1 across every title's extracted theme. This
+     token was simply never in that scope: the accent work asked "is the
+     colour we derived readable", never "is the neutral we hardcoded".
+
+     #87837e measures 5.22:1 on --bg-base and 4.88:1 on --surface. Chosen with
+     margin rather than at the 4.5 line (#807d78 sits at 4.48 on surface —
+     technically nearly there, and one theme tweak from failing again), and it
+     stays clearly dimmer than --fg-muted so the three-step text hierarchy
+     still reads as a hierarchy. */
+  --paper-500: #87837e;
   --paper-700: #45433f;
 
   /* --- Raw palette: status ---------------------------------------------- */
