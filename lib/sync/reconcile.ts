@@ -69,7 +69,15 @@ export function reconcileTitle(
     return local ? { action: "delete" } : { action: "keep" };
   }
 
-  if (!local) return { action: "write", entry: rowToTrackedTitle(row) };
+  // A row whose `summary` is not a usable TitleSummary is skipped entirely
+  // rather than written — see `rowToTrackedTitle`. "keep" is the right action
+  // for both branches below: with no local entry there is nothing to create
+  // from an unusable row, and with one, keeping what this device already has
+  // is strictly better than overwriting it with something that cannot render.
+  if (!local) {
+    const entry = rowToTrackedTitle(row);
+    return entry ? { action: "write", entry } : { action: "keep" };
+  }
   if (remoteAt <= local.updatedAt.getTime()) return { action: "keep" };
 
   // Episodes live in their own table and are reconciled separately, so a title
@@ -77,6 +85,7 @@ export function reconcileTitle(
   // produces. Carrying them across is what keeps a status change on another
   // device from wiping this device's episode progress.
   const incoming = rowToTrackedTitle(row);
+  if (!incoming) return { action: "keep" };
   if (incoming.mediaType === "tv" && local.mediaType === "tv") {
     return {
       action: "write",

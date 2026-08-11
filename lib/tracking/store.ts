@@ -1,3 +1,4 @@
+import { isTitleSummary } from "@/lib/content/validate";
 import { defineStore } from "@/lib/storage";
 import type { Migration } from "@/lib/storage";
 
@@ -168,8 +169,14 @@ function isTrackingEntry(data: unknown): data is TrackingEntry {
     STATUSES.includes(e.status as TrackingStatus) &&
     e.addedAt instanceof Date &&
     e.updatedAt instanceof Date &&
-    typeof e.summary === "object" &&
-    e.summary !== null;
+    // Was `typeof e.summary === "object" && e.summary !== null` — which is to
+    // say, nothing. A snapshot missing `placeholder` passed that check and
+    // then crashed every page that renders a poster, because PosterImage
+    // reads `placeholder.gradientFrom` unguarded. See lib/content/validate.ts
+    // for why this validator is strict about some fields and lenient about
+    // others: rejecting here means the record reads back as `null`, so an
+    // over-strict rule would empty a real user's library.
+    isTitleSummary(e.summary);
 
   if (!baseValid) return false;
 

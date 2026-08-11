@@ -7,7 +7,7 @@ import { trackingStore } from "@/lib/tracking/store";
 import { watchLogStore } from "@/lib/watchlog/store";
 import { seenLevelStore } from "@/lib/xp/store";
 
-import { SyncBackendError } from "./backend";
+import { isMissingTableError, SyncBackendError } from "./backend";
 import {
   captureLocalSnapshot,
   isSnapshotEmpty,
@@ -134,17 +134,61 @@ async function applyMergeLocally(plan: MergePlan): Promise<void> {
  * The first-login merge
  * ------------------------------------------------------------------------ */
 
+/**
+ * Pull one table, tolerating ONLY the table not existing.
+ *
+ * ============================================================================
+ * WHY THIS DEGRADES FOR EXACTLY ONE ERROR AND NOTHING ELSE
+ * ============================================================================
+ * Every pull below used to sit in one `Promise.all`, so a single rejection
+ * took the whole snapshot with it. A real deployment found the consequence:
+ * `home_config` (the eighth table, added in Phase 8 Step 2) had not been
+ * applied to the project yet, and its absence failed the ENTIRE first-login
+ * merge — library, ratings, notes and watch history included. A feature that
+ * did not exist yet broke every feature that did.
+ *
+ * The fix is deliberately narrow. Degrading on ANY failure would be worse than
+ * the bug: a transient network error on `tracked_titles` would make the remote
+ * side look EMPTY, and an empty remote is precisely what `isSnapshotEmpty`
+ * reads as "nothing to confuse, merge automatically" — silently skipping the
+ * §6.6 confirmation that exists to catch signing into the wrong account. So a
+ * timeout, an RLS rejection or a bad JWT must still abort the merge loudly.
+ *
+ * A missing table is different in kind: it is structural, permanent until a
+ * migration runs, and unambiguously means "this table holds no rows for
+ * anyone" rather than "we could not find out". Treating it as empty is
+ * therefore true, not a guess.
+ */
+async function pullTolerantOfMissingTable<T>(
+  backend: SyncBackend,
+  table: SyncTable,
+  since: string | null,
+): Promise<T[]> {
+  try {
+    return await backend.pull<T>(table, since);
+  } catch (error) {
+    if (!isMissingTableError(error)) throw error;
+    // Warn rather than swallow: this is a real deployment gap that someone
+    // needs to close, it just must not take the rest of sync down with it.
+    console.warn(
+      `[sync] table "${table}" is not deployed to this project — treating it as empty. ` +
+        `Apply the migration that creates it; sync for every other table is unaffected.`,
+    );
+    return [];
+  }
+}
+
 export async function fetchRemoteSnapshot(backend: SyncBackend): Promise<RemoteSnapshot> {
   const [trackedTitles, watchedEpisodes, ratings, ratingNotes, watchEvents, badges, xp, homeConfig] =
     await Promise.all([
-      backend.pull<TrackedTitleRow>("tracked_titles", null),
-      backend.pull<WatchedEpisodeRow>("watched_episodes", null),
-      backend.pull<RatingRow>("ratings", null),
-      backend.pull<RatingNoteRow>("rating_notes", null),
-      backend.pull<WatchEventRow>("watch_events", null),
-      backend.pull<BadgeEarnedRow>("badges_earned", null),
-      backend.pull<XpStateRow>("xp_state", null),
-      backend.pull<HomeConfigRow>("home_config", null),
+      pullTolerantOfMissingTable<TrackedTitleRow>(backend, "tracked_titles", null),
+      pullTolerantOfMissingTable<WatchedEpisodeRow>(backend, "watched_episodes", null),
+      pullTolerantOfMissingTable<RatingRow>(backend, "ratings", null),
+      pullTolerantOfMissingTable<RatingNoteRow>(backend, "rating_notes", null),
+      pullTolerantOfMissingTable<WatchEventRow>(backend, "watch_events", null),
+      pullTolerantOfMissingTable<BadgeEarnedRow>(backend, "badges_earned", null),
+      pullTolerantOfMissingTable<XpStateRow>(backend, "xp_state", null),
+      pullTolerantOfMissingTable<HomeConfigRow>(backend, "home_config", null),
     ]);
 
   return {
@@ -376,7 +420,8 @@ export async function pullChanges(userId: string, backend: SyncBackend): Promise
   let applied = 0;
 
   /* ----- tracked_titles ------------------------------------------------- */
-  const titleRows = await backend.pull<TrackedTitleRow>(
+  const titleRows = await pullTolerantOfMissingTable<TrackedTitleRow>(
+    backend,
     "tracked_titles",
     await getCursor(userId, "tracked_titles"),
   );
@@ -399,7 +444,8 @@ export async function pullChanges(userId: string, backend: SyncBackend): Promise
   await advanceCursor(userId, "tracked_titles", titleRows.map((r) => r.updated_at));
 
   /* ----- watched_episodes ----------------------------------------------- */
-  const episodeRows = await backend.pull<WatchedEpisodeRow>(
+  const episodeRows = await pullTolerantOfMissingTable<WatchedEpisodeRow>(
+    backend,
     "watched_episodes",
     await getCursor(userId, "watched_episodes"),
   );
@@ -433,13 +479,18 @@ export async function pullChanges(userId: string, backend: SyncBackend): Promise
   await advanceCursor(userId, "watched_episodes", appliedEpisodeStamps);
 
   /* ----- ratings and notes ---------------------------------------------- */
-  const scoreRows = await backend.pull<RatingRow>(
+  const scoreRows = await pullTolerantOfMissingTable<RatingRow>(
+    backend,
     "ratings",
     await getCursor(userId, "ratings"),
   );
   const syncNotes = await getSyncNotes();
   const noteRows = syncNotes
-    ? await backend.pull<RatingNoteRow>("rating_notes", await getCursor(userId, "rating_notes"))
+    ? await pullTolerantOfMissingTable<RatingNoteRow>(
+        backend,
+        "rating_notes",
+        await getCursor(userId, "rating_notes"),
+      )
     : [];
 
   const ratingKeys = new Set<string>();
@@ -482,7 +533,8 @@ export async function pullChanges(userId: string, backend: SyncBackend): Promise
   }
 
   /* ----- watch_events: append-only union -------------------------------- */
-  const eventRows = await backend.pull<WatchEventRow>(
+  const eventRows = await pullTolerantOfMissingTable<WatchEventRow>(
+    backend,
     "watch_events",
     await getCursor(userId, "watch_events"),
   );
@@ -503,7 +555,8 @@ export async function pullChanges(userId: string, backend: SyncBackend): Promise
   await advanceCursor(userId, "watch_events", eventRows.map((r) => r.updated_at));
 
   /* ----- badges: union, earliest wins ------------------------------------ */
-  const badgeRows = await backend.pull<BadgeEarnedRow>(
+  const badgeRows = await pullTolerantOfMissingTable<BadgeEarnedRow>(
+    backend,
     "badges_earned",
     await getCursor(userId, "badges_earned"),
   );
@@ -518,7 +571,8 @@ export async function pullChanges(userId: string, backend: SyncBackend): Promise
   await advanceCursor(userId, "badges_earned", badgeRows.map((r) => r.updated_at));
 
   /* ----- xp_state: greatest --------------------------------------------- */
-  const xpRows = await backend.pull<XpStateRow>(
+  const xpRows = await pullTolerantOfMissingTable<XpStateRow>(
+    backend,
     "xp_state",
     await getCursor(userId, "xp_state"),
   );
@@ -542,7 +596,8 @@ export async function pullChanges(userId: string, backend: SyncBackend): Promise
    * arriving on the same pull. Same pending-write guard every other
    * reconcile function in this file already applies.
    */
-  const homeConfigRows = await backend.pull<HomeConfigRow>(
+  const homeConfigRows = await pullTolerantOfMissingTable<HomeConfigRow>(
+    backend,
     "home_config",
     await getCursor(userId, "home_config"),
   );

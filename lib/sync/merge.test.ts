@@ -1085,3 +1085,45 @@ describe("uuid on a NON-SECURE origin", () => {
     expect(isUuid(plan.push.watch_events[0].id)).toBe(true);
   });
 });
+
+/* ---------------------------------------------------------------------------
+ * A malformed remote summary must never enter the merge — Phase 8 Step 3
+ * ------------------------------------------------------------------------ */
+
+/**
+ * The first-login merge's "remote only: pure download" branch is a THIRD write
+ * path for a server-supplied summary, alongside the steady-state pull and the
+ * local read. All three needed the same guard: `tracked_titles.summary` is a
+ * `jsonb` column typed `unknown`, and an entry missing `placeholder` crashes
+ * every page that renders a poster.
+ */
+describe("merge: a remote row with an unusable summary", () => {
+  const badRow = titleRow("999", "watched", {
+    summary: { id: "999", mediaType: "tv", name: "Broken" }, // no placeholder
+  });
+
+  it("is not materialized into local tracking", async () => {
+    const plan = await buildMergePlan(USER, emptyLocal(), {
+      ...emptyRemoteSnapshot(),
+      trackedTitles: [badRow],
+    }, { now: NOW });
+    expect(plan.local.tracking["tv:999"]).toBeUndefined();
+  });
+
+  it("is not counted as received — the summary must not report a title you cannot find", async () => {
+    const plan = await buildMergePlan(USER, emptyLocal(), {
+      ...emptyRemoteSnapshot(),
+      trackedTitles: [badRow],
+    }, { now: NOW });
+    expect(plan.summary.counts.titlesReceived).toBe(0);
+  });
+
+  it("does not stop the rest of the merge — a good row alongside it still lands", async () => {
+    const plan = await buildMergePlan(USER, emptyLocal(), {
+      ...emptyRemoteSnapshot(),
+      trackedTitles: [badRow, titleRow("100", "watching")],
+    }, { now: NOW });
+    expect(plan.local.tracking["tv:100"]).toBeDefined();
+    expect(plan.summary.counts.titlesReceived).toBe(1);
+  });
+});

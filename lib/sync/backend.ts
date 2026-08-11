@@ -58,12 +58,42 @@ const PUSH_CHUNK = 500;
 
 export class SyncBackendError extends Error {
   readonly retryable: boolean;
+  /**
+   * The table this operation targeted does not exist on the server at all.
+   *
+   * Split out from `retryable` because it is the one failure a caller can
+   * safely treat as "this feature is not deployed yet" rather than "sync is
+   * broken". See `isMissingTableError` and the degradation in
+   * `fetchRemoteSnapshot`.
+   */
+  readonly missingTable: boolean;
 
-  constructor(message: string, retryable: boolean, options?: { cause?: unknown }) {
+  constructor(
+    message: string,
+    retryable: boolean,
+    options?: { cause?: unknown; missingTable?: boolean },
+  ) {
     super(message, options);
     this.name = "SyncBackendError";
     this.retryable = retryable;
+    this.missingTable = options?.missingTable ?? false;
   }
+}
+
+/**
+ * A table that is not in the schema at all — as opposed to one that rejected a
+ * row, timed out, or refused the JWT.
+ *
+ * `PGRST205` is PostgREST's "Could not find the table 'public.x' in the schema
+ * cache"; `42P01` is Postgres's own `undefined_table`, which a direct SQL path
+ * would surface instead. Both mean the same structural thing: a migration has
+ * not been applied to this project yet.
+ *
+ * Matched on CODE, never on message text, which is localized and reworded
+ * between PostgREST releases.
+ */
+export function isMissingTableError(error: unknown): boolean {
+  return error instanceof SyncBackendError && error.missingTable;
 }
 
 /**
@@ -82,6 +112,19 @@ function classify(error: { code?: string; message?: string } | null): SyncBacken
   const code = error?.code ?? "";
   const message = error?.message ?? "unknown sync failure";
 
+  // Table absent from the schema entirely — a migration not yet applied to
+  // this project.
+  const missingTable =
+    code === "PGRST205" || // PostgREST: not found in the schema cache
+    code === "42P01"; // Postgres: undefined_table
+
+  // NOTE: a missing table is deliberately NOT permanent. "Permanent" here
+  // means the ROW is wrong, so retrying forever would hide a real bug behind a
+  // spinning indicator. A table that has not been deployed yet is the
+  // opposite: the row is fine and the identical write succeeds unchanged the
+  // moment the migration runs. Classifying it permanent would park a good
+  // write in the error state and show a red "sync failed" banner for a feature
+  // the user has never heard of. Queued-and-waiting is the honest state.
   const permanent =
     code.startsWith("23") || // integrity constraint violation
     code === "42501" || // RLS / insufficient privilege
@@ -89,7 +132,7 @@ function classify(error: { code?: string; message?: string } | null): SyncBacken
     code === "PGRST204" || // column not found — schema drift
     code === "PGRST301"; // JWT problem the client cannot fix by waiting
 
-  return new SyncBackendError(message, !permanent, { cause: error });
+  return new SyncBackendError(message, !permanent, { cause: error, missingTable });
 }
 
 export const nullSyncBackend: SyncBackend = {
@@ -167,7 +210,18 @@ export function createSupabaseSyncBackend(userId: string): SyncBackend {
             .from(table)
             .select("*", { count: "exact", head: true })
             .eq("user_id", userId);
-          if (error) throw classify(error);
+          if (error) {
+            const classified = classify(error);
+            // A table that does not exist holds no rows, which is exactly what
+            // a count of 0 says. Throwing would make the §6.6 merge prompt
+            // impossible to compute, so an un-deployed feature would block the
+            // merge it has nothing to do with. Every other error still throws.
+            if (classified.missingTable) {
+              counts[table] = 0;
+              return;
+            }
+            throw classified;
+          }
           counts[table] = count ?? 0;
         }),
       );

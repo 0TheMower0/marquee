@@ -380,3 +380,40 @@ describe("reconcileRating", () => {
     });
   });
 });
+
+/* ---------------------------------------------------------------------------
+ * A malformed summary must never be written locally — Phase 8 Step 3
+ * ------------------------------------------------------------------------ */
+
+/**
+ * `tracked_titles.summary` is a `jsonb` column typed `unknown`, writable by
+ * any client version. A row whose summary lacks `placeholder` used to be
+ * written straight into local storage, where it crashed every page that
+ * renders a poster (PosterImage reads `placeholder.gradientFrom` unguarded).
+ * The row is skipped now — it stays on the server, and this device keeps
+ * whatever it already had.
+ */
+describe("reconcileTitle — refuses to persist an unusable summary", () => {
+  const badSummary = { id: "100", mediaType: "tv", name: "Broken" }; // no placeholder
+
+  it("skips a remote-only row whose summary is unusable, instead of creating it", () => {
+    const result = reconcileTitle(undefined, titleRow({ summary: badSummary }), null);
+    expect(result.action).toBe("keep");
+  });
+
+  it("keeps the local entry rather than overwriting it with an unusable row", () => {
+    const local = localTv("100", "2026-06-01T00:00:00.000Z");
+    const result = reconcileTitle(
+      local,
+      titleRow({ summary: badSummary, client_updated_at: "2026-07-01T00:00:00.000Z" }),
+      null,
+    );
+    // Newer remote row, so without the guard this WOULD have overwritten local.
+    expect(result.action).toBe("keep");
+  });
+
+  it("still writes a remote row whose summary is complete (positive control)", () => {
+    const result = reconcileTitle(undefined, titleRow(), null);
+    expect(result.action).toBe("write");
+  });
+});

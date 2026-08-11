@@ -1,4 +1,5 @@
 import type { MediaType } from "@/lib/content/types";
+import { isTitleSummary } from "@/lib/content/validate";
 // Sub-path, not the @/lib/home barrel — matching every other cross-domain
 // import in this file (tracking/ratings/watchlog all import their /types
 // sub-path too), and for a load-bearing reason here specifically: the
@@ -114,14 +115,36 @@ export function trackedTitleToRow(
 }
 
 /**
- * Server row -> local entry.
+ * Server row -> local entry, or `null` if the row's `summary` is not a usable
+ * `TitleSummary`.
  *
- * `summary` is passed through as-is. It is denormalized provider data stored
- * as `jsonb` and read as a unit; validating its interior here would duplicate
- * `isTrackingEntry` in the store, which already runs on every read and treats
- * a bad shape as an unreadable record rather than a crash.
+ * ============================================================================
+ * WHY THIS RETURNS NULL RATHER THAN TRUSTING THE STORE'S OWN VALIDATOR
+ * ============================================================================
+ * This used to pass `summary` through as-is, on the stated reasoning that
+ * `isTrackingEntry` in the store "already runs on every read and treats a bad
+ * shape as an unreadable record rather than a crash". The intent was right and
+ * the implementation was not: that validator checked only that `summary` was a
+ * non-null object, so a snapshot missing `placeholder` sailed through, got
+ * written to local storage, and crashed every page rendering a poster.
+ *
+ * `isTrackingEntry` is fixed now, which closes the READ path. This closes the
+ * WRITE path, and both are worth having for different reasons: the store's
+ * validator protects against whatever is already on disk, while this stops a
+ * malformed server row from ever being persisted in the first place — so the
+ * bad row is never written, never re-read, and never has to be recovered from.
+ *
+ * `summary` is `unknown` on the row type by construction (it is a `jsonb`
+ * column, writable by any client version), which is exactly why it needs a
+ * runtime check rather than a cast. Same shape as `rowToHomeConfig`, which
+ * already returns `null` for a config blob it cannot vouch for.
  */
-export function rowToTrackedTitle(row: TrackedTitleRow): TrackingEntry {
+export function rowToTrackedTitle(row: TrackedTitleRow): TrackingEntry | null {
+  if (!isTitleSummary(row.summary)) return null;
+  return buildTrackedTitle(row);
+}
+
+function buildTrackedTitle(row: TrackedTitleRow): TrackingEntry {
   const base = {
     id: row.title_id,
     status: row.status,

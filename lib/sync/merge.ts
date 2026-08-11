@@ -1,4 +1,5 @@
 import type { MediaType } from "@/lib/content/types";
+import { isTitleSummary } from "@/lib/content/validate";
 import type { HomeConfig } from "@/lib/home";
 import type { RatingEntry } from "@/lib/ratings/types";
 import { normalizeRanges } from "@/lib/tracking/ranges";
@@ -363,6 +364,10 @@ export async function buildMergePlan(
       if (remoteRow.deleted_at) continue;
 
       const received = remoteRowToEntry(remoteRow, remoteEpisodeRows);
+      // An unusable summary is skipped rather than counted — reporting it as
+      // "received" would put a number in the merge summary that the user
+      // cannot find anywhere in their library.
+      if (!received) continue;
       mergedTracking[key] = received;
       summary.counts.titlesReceived += 1;
       continue;
@@ -677,10 +682,24 @@ function pickNewerHomeConfig(local: HomeConfig | null, remote: HomeConfig | null
   return remote.updatedAt.getTime() > local.updatedAt.getTime() ? remote : local;
 }
 
+/**
+ * Returns `null` when the row's `summary` is not a usable `TitleSummary`.
+ *
+ * The third write path for a server-supplied summary, alongside
+ * `rowToTrackedTitle` (steady-state pull) and `isTrackingEntry` (local read).
+ * All three need the check for the same reason: `summary` is a `jsonb` column
+ * typed `unknown`, and an entry whose `placeholder` is missing crashes every
+ * page that renders a poster. Skipping is safe HERE specifically because this
+ * branch only runs for a title the local device does not have — so there is
+ * nothing to lose by not materializing it, and the row stays on the server to
+ * be picked up once whatever wrote it is fixed.
+ */
 function remoteRowToEntry(
   row: TrackedTitleRow,
   episodeRows: readonly WatchedEpisodeRow[],
-): TrackingEntry {
+): TrackingEntry | null {
+  if (!isTitleSummary(row.summary)) return null;
+
   const base = {
     id: row.title_id,
     status: row.status,
