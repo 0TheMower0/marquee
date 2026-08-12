@@ -61,17 +61,54 @@ describe("clientIp — spoofing resistance", () => {
     expect(clientIp(headers({ "x-forwarded-for": "203.0.113.9" }))).toBe("203.0.113.9");
   });
 
-  it("prefers x-vercel-forwarded-for over a client-supplied x-forwarded-for", () => {
+  /* -------------------------------------------------------------------------
+   * These four replace two tests that asserted the OPPOSITE — that `x-real-ip`
+   * and `x-vercel-forwarded-for` were PREFERRED over `x-forwarded-for`. The
+   * bug was not merely unnoticed; it was pinned as intended behaviour by a
+   * passing suite, which is why review never caught it.
+   *
+   * Measured live on a Vercel preview before the fix: 40 concurrent requests
+   * each carrying a unique forged `X-Real-IP` returned 40x200 / 0x429, while
+   * the identical burst with no forged header returned 34x200 / 6x429. One
+   * header defeated the whole limiter.
+   * ---------------------------------------------------------------------- */
+
+  it("IGNORES x-real-ip — a forged one must not mint a fresh bucket", () => {
+    const real = clientIp(headers({ "x-forwarded-for": "1.2.3.4, 203.0.113.9" }));
+    const forged = clientIp(
+      headers({ "x-forwarded-for": "1.2.3.4, 203.0.113.9", "x-real-ip": "198.51.100.77" }),
+    );
+    expect(forged).toBe(real);
+    expect(forged).toBe("203.0.113.9");
+  });
+
+  it("gives every forged x-real-ip the SAME bucket, not one each", () => {
+    // The actual attack: vary the header per request and get a fresh quota
+    // each time. All of these must resolve to one identity.
+    const resolved = new Set(
+      ["203.0.113.1", "203.0.113.2", "203.0.113.3", "203.0.113.4"].map((forged) =>
+        clientIp(headers({ "x-forwarded-for": "1.2.3.4, 198.51.100.7", "x-real-ip": forged })),
+      ),
+    );
+    expect(resolved.size).toBe(1);
+    expect([...resolved][0]).toBe("198.51.100.7");
+  });
+
+  it("IGNORES x-vercel-forwarded-for — asserted-not-verified, and absent in practice", () => {
     const h = headers({
-      "x-forwarded-for": "1.2.3.4",
-      "x-vercel-forwarded-for": "203.0.113.9",
+      "x-forwarded-for": "1.2.3.4, 203.0.113.9",
+      "x-vercel-forwarded-for": "198.51.100.77",
     });
     expect(clientIp(h)).toBe("203.0.113.9");
   });
 
-  it("prefers x-real-ip over x-forwarded-for", () => {
-    const h = headers({ "x-forwarded-for": "1.2.3.4", "x-real-ip": "203.0.113.9" });
-    expect(clientIp(h)).toBe("203.0.113.9");
+  it("returns null when ONLY the untrusted headers are present", () => {
+    // No x-forwarded-for at all: there is no trustworthy source, so this must
+    // report "unknown" rather than fall back to something forgeable.
+    // `limiter.ts` buckets unknown callers together, so null is not a bypass.
+    expect(
+      clientIp(headers({ "x-real-ip": "198.51.100.77", "x-vercel-forwarded-for": "1.2.3.4" })),
+    ).toBeNull();
   });
 
   it("honours a configured hop count for a two-proxy deployment", () => {

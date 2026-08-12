@@ -36,6 +36,46 @@
  * attacker-controlled and per-IP limiting is best-effort at most. That is a
  * real limitation, not a solved problem — it is precisely why the global
  * budget in `budget.ts` exists as a backstop that IP spoofing cannot evade.
+ *
+ * ============================================================================
+ * WHY `X-Real-IP` IS NOT CONSULTED, AND MUST NOT BE RE-ADDED
+ * ============================================================================
+ * It used to be, checked BEFORE the list above and returned unconditionally,
+ * with a comment claiming it was "single-valued and proxy-set on most
+ * platforms, including Vercel." That was never verified, and it is false on
+ * Vercel: a live three-way burst against a preview deployment measured 40/40
+ * requests succeeding when each carried a unique forged `X-Real-IP`, against
+ * 34/40 with 6 rejections for the identical burst with no forged header. One
+ * header defeated the entire limiter.
+ *
+ * This is NOT a Vercel quirk — it is a property of the header itself, and the
+ * distinction is what makes the rule general:
+ *
+ *   - `X-Forwarded-For` is APPEND-ONLY. A conforming proxy appends the peer
+ *     address it observed, so a forged prefix is still there but the Nth entry
+ *     from the right is proxy-written. You can count PAST the forgery.
+ *   - `X-Real-IP` is a SCALAR. There is no proxy-written part to count to.
+ *     Either the proxy overwrote the whole value or it did not, and the
+ *     application cannot tell by inspection.
+ *
+ * So trusting it means trusting a deployment configuration this code cannot
+ * verify. It is also not in any RFC — it is an nginx convention
+ * (`proxy_set_header X-Real-IP $remote_addr`). Behind such an nginx it happens
+ * to be safe; behind anything else it is attacker-controlled, and it flips
+ * silently when someone adds a hop.
+ *
+ * `X-Vercel-Forwarded-For` was removed for the same reason, one level worse:
+ * it was checked FIRST and asserted to be proxy-set, and the same burst is
+ * evidence it is simply ABSENT on Vercel requests — forging `X-Real-IP` could
+ * not have bypassed anything if the branch above it had returned a value. An
+ * untested trusted-input path that never fires is not defence, it is a hole
+ * waiting for the header to start appearing.
+ *
+ * The lesson, since it happened twice in one function: an unverified
+ * assumption placed AHEAD of a verified one means the verified code never
+ * runs. If a platform-specific source is ever genuinely wanted, use the
+ * supported API (`ipAddress()` from `@vercel/functions`), not a header whose
+ * provenance is a guess.
  */
 
 const DEFAULT_TRUSTED_PROXY_HOPS = 1;
@@ -75,21 +115,10 @@ export function normalizeIp(value: string): string {
  * missing header is not a bypass.
  */
 export function clientIp(headers: Headers): string | null {
-  // Set by Vercel's own proxy rather than forwarded from the client, so it
-  // is not subject to the prepending trick above.
-  const vercelForwarded = headers.get("x-vercel-forwarded-for");
-  if (vercelForwarded) {
-    const parts = splitForwarded(vercelForwarded);
-    if (parts.length > 0) return parts[parts.length - 1];
-  }
-
-  // Single-valued and proxy-set on most platforms, including Vercel.
-  const realIp = headers.get("x-real-ip");
-  if (realIp) {
-    const normalized = normalizeIp(realIp);
-    if (normalized) return normalized;
-  }
-
+  // `X-Forwarded-For` is the ONLY source consulted, deliberately. See the
+  // header comment for why `X-Real-IP` and `X-Vercel-Forwarded-For` were
+  // removed and must not come back — both were trusted on an assertion, and
+  // one of them was measured defeating the limiter outright.
   const forwarded = headers.get("x-forwarded-for");
   if (forwarded) {
     const parts = splitForwarded(forwarded);
