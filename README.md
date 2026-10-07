@@ -1,36 +1,160 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Marquee
 
-## Getting Started
+**Full-stack movie & TV tracking web application**
 
-First, run the development server:
+Marquee is a web application for discovering, tracking, rating, and organizing movies and TV shows. It combines content discovery with personal watchlists, episode-level progress, statistics, custom lists, and cloud synchronization.
+
+🌐 **Live Demo:** https://marquee-coral.vercel.app/
+
+---
+
+## Features
+
+- 🎬 Movie and TV show discovery and search
+- 🔎 Detailed content pages with ratings and metadata
+- 📺 Episode-level TV show progress tracking
+- ⭐ Personal ratings and notes
+- 📋 Watchlist, Watching, and Watched libraries
+- ▶️ Up Next and viewing progress
+- 📅 Schedule and upcoming content
+- 👤 User accounts and cloud synchronization
+- 📊 Statistics, XP, levels, streaks, badges, and yearly summaries
+- 📝 Custom lists with visibility and collaboration options
+- 💬 Comments, likes, replies, and reporting
+- 📥 CSV import support for supported movie/TV lists
+- 📱 Responsive interface and Progressive Web App support
+- 💾 Offline-first local storage with cloud synchronization for signed-in users
+
+---
+
+## Tech Stack
+
+### Frontend
+
+- Next.js
+- React
+- TypeScript
+- Tailwind CSS
+
+### Backend & Data
+
+- Next.js Route Handlers and Server Actions
+- Supabase
+- PostgreSQL
+- Supabase Authentication
+- Row Level Security (RLS)
+
+### APIs & Services
+
+- TMDB API
+- OMDb API
+- Vercel
+
+### Development
+
+- Git & GitHub
+- ESLint
+- Vitest
+- npm
+- AI-assisted development
+
+---
+
+## Architecture
+
+Marquee uses a full-stack, serverless architecture built around Next.js and Supabase.
+
+- **Next.js** handles the application, server-side logic, and API routes.
+- **Supabase/PostgreSQL** stores authenticated users and synchronized application data.
+- **Supabase Auth** handles user authentication.
+- **TMDB and OMDb** provide movie and TV metadata and ratings.
+- **Vercel** hosts the production application.
+- Signed-out users can work with local browser storage, while signed-in users can synchronize their data with the cloud.
+
+API credentials are kept server-side and are not included in the public repository.
+
+---
+
+## Live Demo
+
+**https://marquee-coral.vercel.app/**
+
+---
+
+## Running Locally
+
+### Requirements
+
+- Node.js
+- npm
+- Supabase project
+- TMDB API credentials
+- OMDb API credentials
+
+### Installation
+
+Clone the repository:
+
+```bash
+git clone https://github.com/0TheMower0/marquee.git
+cd marquee
+```
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Create a local environment file.
+
+**Windows PowerShell:**
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+Add the required environment variables to `.env.local`.
+
+Start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```text
+http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## Testing
 
-To learn more about Next.js, take a look at the following resources:
+The project includes automated tests using **Vitest**.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Run the project's configured test command from `package.json`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+## Deployment
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The production application is deployed with **Vercel**.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+**Live application:**  
+https://marquee-coral.vercel.app/
+
+---
+
+## Project Background
+
+Marquee was developed as a personal full-stack web application project to gain practical experience with modern web development, databases, authentication, APIs, deployment, and application architecture.
+
+Development was **AI-assisted**. I directed the project, reviewed implementation approaches, configured the development and deployment environment, tested functionality, and iterated on the application.
+
+---
+
+## License
+
+This project is intended as a personal portfolio project.
